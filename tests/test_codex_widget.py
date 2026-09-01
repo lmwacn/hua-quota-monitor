@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 from src.codex_widget import (
     _account_title_suffix,
+    _format_account_summary,
+    _format_credit_menu_title,
     _format_limit_item,
     _is_valid_display_name,
     _is_valid_account_name,
@@ -77,6 +80,28 @@ class CodexWidgetFormattingTests(unittest.TestCase):
         )
         self.assertEqual(_profile_display_name({"name": "work"}), "work")
         self.assertEqual(_suggest_display_name(Path("/tmp/个人/auth.json")), "个人")
+
+    def test_summary_merges_nickname_and_update_minute(self) -> None:
+        updated = datetime(2026, 9, 1, 21, 1, 27)
+        self.assertEqual(
+            _format_account_summary("超哥", updated),
+            "顶栏主账号：超哥（21:01）",
+        )
+        self.assertEqual(_format_account_summary("超哥"), "顶栏主账号：超哥")
+
+    def test_reset_credit_count_is_merged_into_submenu_title(self) -> None:
+        self.assertEqual(
+            _format_credit_menu_title(0, [], True),
+            "重置卡到期时间（0 张）",
+        )
+        self.assertEqual(
+            _format_credit_menu_title(None, [{}, {}], True),
+            "重置卡到期时间（2 张）",
+        )
+        self.assertEqual(
+            _format_credit_menu_title(None, [], False),
+            "重置卡到期时间（暂时无法获取）",
+        )
 
 
 if __name__ == "__main__":

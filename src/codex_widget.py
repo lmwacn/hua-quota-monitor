@@ -67,17 +67,15 @@ def _run_menubar_impl(
                 ("main", "额度：刷新中"),
                 ("main_reset", "重置时间：刷新中"),
                 ("balance", "点数：刷新中"),
-                ("credits", "可用重置卡：刷新中"),
-                ("updated", "最近更新：刷新中"),
             ):
                 self.summary_items[key] = self._info(self.menu, title)
             self.menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self.credit_menu = AppKit.NSMenu.alloc().init()
-            credit_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "重置卡到期时间", None, ""
+            self.credit_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "重置卡到期时间（刷新中）", None, ""
             )
-            credit_root.setSubmenu_(self.credit_menu)
-            self.menu.addItem_(credit_root)
+            self.credit_root.setSubmenu_(self.credit_menu)
+            self.menu.addItem_(self.credit_root)
             self.accounts_menu = AppKit.NSMenu.alloc().init()
             accounts_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 "账号监控", None, ""
@@ -274,9 +272,6 @@ def _run_menubar_impl(
             selected_display_name = (
                 _profile_display_name(selected_profile) if selected_profile else None
             )
-            self.summary_items["account"].setTitle_(
-                f"顶栏主账号：{selected_display_name or '未选择'}"
-            )
             self.results.update(fetched)
             if all_accounts:
                 names = {str(_profile_value(p, "name")) for p in profiles}
@@ -284,6 +279,12 @@ def _run_menubar_impl(
                 self.last_all_refresh = monotonic()
             self._build_accounts_menu(profiles)
             current = self.results.get(selected) if selected else None
+            self.summary_items["account"].setTitle_(
+                _format_account_summary(
+                    selected_display_name or "未选择",
+                    current.get("updated") if current else None,
+                )
+            )
             if current is None or current["usage"] is None:
                 self._set_failed_summary()
             else:
@@ -299,9 +300,9 @@ def _run_menubar_impl(
 
         @objc.python_method
         def _set_failed_summary(self) -> None:
-            for key in ("main", "main_reset", "balance", "credits"):
+            for key in ("main", "main_reset", "balance"):
                 self.summary_items[key].setTitle_(f"{self.summary_items[key].title().split('：')[0]}：查询失败")
-            self.summary_items["updated"].setTitle_("最近更新：失败")
+            self.credit_root.setTitle_("重置卡到期时间（查询失败）")
             self.status_item.button().setTitle_("!")
 
         @objc.python_method
@@ -309,7 +310,9 @@ def _run_menubar_impl(
             usage, reset = item["usage"], item["reset"]
             windows = rate_limit_windows(usage.get("rate_limit") or {})
             window_label, primary = windows[0] if windows else ("额度", {})
-            self.summary_items["account"].setTitle_(f"顶栏主账号：{name}")
+            self.summary_items["account"].setTitle_(
+                _format_account_summary(name, item.get("updated"))
+            )
             self.summary_items["main"].setTitle_(
                 _format_limit_item(window_label, primary)
             )
@@ -323,16 +326,10 @@ def _run_menubar_impl(
                 )
             credits = reset.get("credits") or [] if reset else []
             count = (usage.get("rate_limit_reset_credits") or {}).get("available_count")
-            if reset is None:
-                self.summary_items["credits"].setTitle_("可用重置卡：暂时无法获取")
-            else:
-                self.summary_items["credits"].setTitle_(
-                    f"可用重置卡：{count if count is not None else len(credits)} 张"
-                )
-            self._build_credit_menu(credits)
-            self.summary_items["updated"].setTitle_(
-                f"最近更新：{item['updated'].strftime('%H:%M:%S')}"
+            self.credit_root.setTitle_(
+                _format_credit_menu_title(count, credits, reset is not None)
             )
+            self._build_credit_menu(credits)
             used_percent = primary.get("used_percent")
             title = "—" if used_percent is None else f"{max(0, 100 - _to_percent(used_percent))}%"
             if positive:
@@ -839,6 +836,23 @@ def _profile_display_name(profile: Any) -> str:
         or _profile_value(profile, "name")
         or "未命名账号"
     )
+
+
+def _format_account_summary(name: str, updated: Any = None) -> str:
+    suffix = f"（{updated.strftime('%H:%M')}）" if isinstance(updated, datetime) else ""
+    return f"顶栏主账号：{name}{suffix}"
+
+
+def _format_credit_menu_title(
+    count: Any, credits: list[dict[str, Any]], reset_loaded: bool
+) -> str:
+    if count is not None:
+        value = count
+    elif reset_loaded:
+        value = len(credits)
+    else:
+        return "重置卡到期时间（暂时无法获取）"
+    return f"重置卡到期时间（{value} 张）"
 
 
 def _is_valid_display_name(name: str) -> bool:
