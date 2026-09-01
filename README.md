@@ -123,6 +123,7 @@ uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
 ```
 
 顶栏应用同样会按 `--interval` 自动刷新，退出请从顶栏菜单选择“退出”。
+每次刷新时，如果当前 `~/.codex/auth.json` 能匹配已管理账号，顶栏应用会自动将可能已刷新的登录凭据同步回该账号。
 
 ### 顶栏监控多个账号
 

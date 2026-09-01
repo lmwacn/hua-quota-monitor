@@ -176,6 +176,15 @@ def _run_menubar_impl(
                     "当前账号",
                     "当前账号",
                 )
+            # Codex may rotate tokens in ~/.codex/auth.json at any time. Persist
+            # the latest known credential before reading managed profiles so a
+            # later account switch cannot restore a stale token.
+            try:
+                self.account_store.sync_canonical()
+            except Exception as exc:
+                # A temporarily unreadable canonical file should not prevent
+                # monitoring the last valid credentials stored for each account.
+                print(f"当前账号凭据自动同步失败：{exc}")
             profiles = list(self.account_store.list_accounts())
             current = self.account_store.get_current()
             selected = _profile_value(current, "name") if current else None

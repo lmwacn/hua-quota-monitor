@@ -224,6 +224,34 @@ class AccountStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_account("personal").auth_path.read_bytes(), refreshed)
         self.assertEqual(self.canonical.read_bytes(), refreshed)
 
+    def test_sync_canonical_updates_known_account_without_switching(self) -> None:
+        original = self._source("personal.json", _auth("acct-a", "a@example.com", "old"))
+        self.store.import_account("personal", original, make_current=True)
+        self.canonical.parent.mkdir(parents=True)
+        refreshed = _auth("acct-a", "a@example.com", "refreshed")
+        self.canonical.write_bytes(refreshed)
+
+        profile = self.store.sync_canonical()
+
+        self.assertEqual(profile.name, "personal")
+        self.assertEqual(self.store.get_account("personal").auth_path.read_bytes(), refreshed)
+        self.assertEqual(self.store.get_current().name, "personal")
+        self.assertEqual(list(self.store.backups_dir.iterdir()), [])
+
+    def test_sync_canonical_ignores_unknown_account_without_backup(self) -> None:
+        known = self._source("personal.json", _auth("acct-a", "a@example.com", "known"))
+        self.store.import_account("personal", known)
+        self.canonical.parent.mkdir(parents=True)
+        self.canonical.write_bytes(
+            _auth("acct-unknown", "unknown@example.com", "unknown")
+        )
+
+        profile = self.store.sync_canonical()
+
+        self.assertIsNone(profile)
+        self.assertEqual(self.store.get_account("personal").auth_path.read_bytes(), known.read_bytes())
+        self.assertEqual(list(self.store.backups_dir.iterdir()), [])
+
     def test_account_symlink_cannot_escape_store(self) -> None:
         outside = Path(self.temporary.name) / "outside"
         outside.mkdir()

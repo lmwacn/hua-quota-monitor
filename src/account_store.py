@@ -216,6 +216,32 @@ class AccountStore:
             profile, _ = self._snapshot_canonical_unlocked()
             return profile
 
+    def sync_canonical(self) -> AccountProfile | None:
+        """Update a known active profile from the canonical Codex auth file.
+
+        Unlike :meth:`snapshot_canonical`, this background-safe variant leaves
+        unknown credentials untouched instead of creating a new backup on every
+        periodic refresh.
+        """
+
+        with self._locked():
+            if not self.canonical_auth_path.is_file():
+                return None
+            try:
+                credential = self.canonical_auth_path.read_bytes()
+            except OSError as exc:
+                raise InvalidAuthFileError(
+                    f"无法读取认证文件：{self.canonical_auth_path}"
+                ) from exc
+            metadata = _parse_auth_bytes(credential, self.canonical_auth_path)
+            matched_name = self._matching_account_name_unlocked(metadata)
+            if matched_name is None:
+                return None
+            target_path = self._auth_path(matched_name)
+            if target_path.read_bytes() != credential:
+                self._atomic_write(target_path, credential)
+            return self._profile_unlocked(matched_name, active_name=matched_name)
+
     def activate(self, name: str) -> ActivationResult:
         """Atomically activate a profile as the canonical Codex auth file.
 
@@ -324,18 +350,7 @@ class AccountStore:
                 f"无法读取认证文件：{self.canonical_auth_path}"
             ) from exc
         metadata = _parse_auth_bytes(credential, self.canonical_auth_path)
-        matched_name = None
-        if metadata.account_id:
-            for candidate in self._account_names_unlocked():
-                try:
-                    candidate_metadata = _parse_auth_bytes(
-                        self._auth_path(candidate).read_bytes(), self._auth_path(candidate)
-                    )
-                except (OSError, InvalidAuthFileError):
-                    continue
-                if candidate_metadata.account_id == metadata.account_id:
-                    matched_name = candidate
-                    break
+        matched_name = self._matching_account_name_unlocked(metadata)
 
         if matched_name is not None:
             self._atomic_write(self._auth_path(matched_name), credential)
@@ -346,6 +361,20 @@ class AccountStore:
         backup_path = self.backups_dir / f"canonical-{timestamp}-{uuid.uuid4().hex[:8]}.auth.json"
         self._atomic_write(backup_path, credential)
         return None, backup_path
+
+    def _matching_account_name_unlocked(self, metadata: _AuthMetadata) -> str | None:
+        if not metadata.account_id:
+            return None
+        for candidate in self._account_names_unlocked():
+            try:
+                candidate_metadata = _parse_auth_bytes(
+                    self._auth_path(candidate).read_bytes(), self._auth_path(candidate)
+                )
+            except (OSError, InvalidAuthFileError):
+                continue
+            if candidate_metadata.account_id == metadata.account_id:
+                return candidate
+        return None
 
     def _current_name_unlocked(self) -> str | None:
         name = self._read_state_unlocked()["current"]
