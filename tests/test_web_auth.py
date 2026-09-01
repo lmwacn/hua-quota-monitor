@@ -15,6 +15,7 @@ from src.web_auth import (
     InvalidWebAuthResultError,
     WebAuthCommandError,
     WebAuthTimeoutError,
+    _resolve_codex_executable,
     login_with_chatgpt,
 )
 
@@ -38,6 +39,7 @@ class WebAuthTests(unittest.TestCase):
 
     def test_success_uses_isolated_home_and_cleans_it(self) -> None:
         marker = self.base / "isolated-home.txt"
+        path_marker = self.base / "login-path.txt"
         normal_home = self.base / "normal-codex-home"
         normal_home.mkdir()
         canonical = normal_home / "auth.json"
@@ -55,6 +57,7 @@ class WebAuthTests(unittest.TestCase):
             ]
             home = pathlib.Path(os.environ["CODEX_HOME"])
             pathlib.Path(os.environ["WEB_AUTH_TEST_MARKER"]).write_text(str(home))
+            pathlib.Path(os.environ["WEB_AUTH_PATH_MARKER"]).write_text(os.environ["PATH"])
             (home / "auth.json").write_text(json.dumps({
                 "auth_mode": "chatgpt",
                 "tokens": {"secret": "private"},
@@ -67,6 +70,8 @@ class WebAuthTests(unittest.TestCase):
             {
                 "CODEX_HOME": str(normal_home),
                 "WEB_AUTH_TEST_MARKER": str(marker),
+                "WEB_AUTH_PATH_MARKER": str(path_marker),
+                "PATH": "/usr/bin:/bin",
             },
         ):
             result = login_with_chatgpt(codex_executable=fake, timeout=5)
@@ -76,6 +81,23 @@ class WebAuthTests(unittest.TestCase):
         self.assertFalse(isolated_home.exists())
         self.assertEqual(json.loads(result), credential)
         self.assertEqual(canonical.read_text(encoding="utf-8"), '{"normal": true}')
+        login_path = path_marker.read_text(encoding="utf-8").split(os.pathsep)
+        self.assertEqual(login_path[0], str(fake.parent))
+        self.assertIn("/usr/local/bin", login_path)
+
+    def test_finds_npm_prefix_when_gui_path_has_no_codex(self) -> None:
+        npm_prefix = self.base / "npm-prefix"
+        fake = npm_prefix / "bin" / "codex"
+        fake.parent.mkdir(parents=True)
+        fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+
+        with mock.patch.dict(
+            os.environ,
+            {"PATH": "/usr/bin:/bin", "NPM_CONFIG_PREFIX": str(npm_prefix)},
+            clear=False,
+        ), mock.patch("src.web_auth.shutil.which", return_value=None):
+            self.assertEqual(_resolve_codex_executable(None), str(fake))
 
     def test_missing_codex_has_clear_error(self) -> None:
         missing = self.base / "does-not-exist"

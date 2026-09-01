@@ -60,6 +60,7 @@ def login_with_chatgpt(
         isolated_home.chmod(0o700)
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(isolated_home)
+        environment["PATH"] = _login_path(executable, environment.get("PATH", ""))
 
         try:
             process = subprocess.Popen(
@@ -95,6 +96,23 @@ def login_with_chatgpt(
 def _resolve_codex_executable(executable: Path | str | None) -> str:
     if executable is None:
         resolved = shutil.which("codex")
+        if not resolved:
+            candidates = []
+            npm_prefix = os.environ.get("NPM_CONFIG_PREFIX")
+            if npm_prefix:
+                candidates.append(Path(npm_prefix).expanduser() / "bin" / "codex")
+            candidates.extend(
+                (
+                    Path.home() / ".npm-global" / "bin" / "codex",
+                    Path.home() / ".local" / "bin" / "codex",
+                    Path("/opt/homebrew/bin/codex"),
+                    Path("/usr/local/bin/codex"),
+                )
+            )
+            resolved = next(
+                (os.fspath(path) for path in candidates if os.access(path, os.X_OK)),
+                None,
+            )
     elif isinstance(executable, Path):
         candidate = os.fspath(executable.expanduser())
         resolved = candidate if os.access(candidate, os.X_OK) else None
@@ -107,6 +125,24 @@ def _resolve_codex_executable(executable: Path | str | None) -> str:
     if not resolved:
         raise CodexNotFoundError("未找到 codex 命令，请先安装 Codex CLI")
     return resolved
+
+
+def _login_path(executable: str, existing_path: str) -> str:
+    """Provide GUI-launched npm scripts with both ``codex`` and ``node`` paths."""
+
+    candidates = [
+        os.fspath(Path(executable).parent),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        os.fspath(Path.home() / ".npm-global" / "bin"),
+        os.fspath(Path.home() / ".local" / "bin"),
+        *existing_path.split(os.pathsep),
+    ]
+    unique = []
+    for candidate in candidates:
+        if candidate and candidate not in unique:
+            unique.append(candidate)
+    return os.pathsep.join(unique)
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
