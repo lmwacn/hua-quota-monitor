@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src.account_store import AccountStore, AccountStoreError
 from src.chatgpt_probe import ChatGPTProbeConfig, probe_chatgpt_session
 from src.codex_usage import CodexUsageError, get_codex_reset_credits, get_codex_usage
 from src.dashboard_server import DEFAULT_DASHBOARD_PORT, run_dashboard
@@ -19,6 +20,13 @@ from src.time_windows import resolve_window
 
 CONFIG_PATH = Path("config.example.json")
 DEFAULT_CODEX_AUTH_FILE = "~/.codex/auth.json"
+
+
+def _account_store(args: argparse.Namespace) -> AccountStore:
+    return AccountStore(
+        root=Path(args.store_dir).expanduser(),
+        canonical_auth_path=Path(args.codex_auth_file).expanduser(),
+    )
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -166,14 +174,107 @@ def cmd_menubar(args: argparse.Namespace) -> int:
         )
         print(f"桌面快捷按钮已创建：{shortcut}")
         return 0
+    store = AccountStore(
+        root=Path(args.account_store).expanduser(),
+        canonical_auth_path=Path(args.auth_file).expanduser(),
+    )
+    if not store.list_accounts() and Path(args.auth_file).expanduser().is_file():
+        try:
+            store.import_account(
+                "current",
+                args.auth_file,
+                display_name="当前账号",
+                make_current=True,
+            )
+            print("已将当前 Codex 账号纳入监控，名称：当前账号")
+        except AccountStoreError as exc:
+            print(f"无法初始化账号监控：{exc}", file=sys.stderr)
+            return 1
     return run_menubar(
         auth_file=Path(args.auth_file).expanduser(),
+        account_store=store,
         base_url=args.base_url,
         interval=args.interval,
         width=args.width,
         height=args.height,
         alpha=args.alpha,
     )
+
+
+def cmd_account(args: argparse.Namespace) -> int:
+    try:
+        store = _account_store(args)
+        if args.account_command == "import":
+            profile = store.import_account(
+                args.name,
+                Path(args.auth_file).expanduser(),
+                display_name=args.display_name,
+                make_current=args.current or not store.list_accounts(),
+                replace=args.replace,
+            )
+            print(f"已导入账号：{profile.display_name}（{profile.email or profile.account_id or '未知账号'}）")
+            return 0
+
+        if args.account_command == "list":
+            profiles = store.list_accounts()
+            if args.json:
+                print(
+                    json.dumps(
+                        [
+                            {
+                                "name": profile.name,
+                                "display_name": profile.display_name,
+                                "email": profile.email,
+                                "account_id": profile.account_id,
+                                "monitoring": profile.is_current,
+                                "active": profile.is_active,
+                                "error": profile.error,
+                            }
+                            for profile in profiles
+                        ],
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return 0
+            if not profiles:
+                print("还没有导入账号。")
+                return 0
+            for profile in profiles:
+                flags = []
+                if profile.is_active:
+                    flags.append("Codex 当前")
+                if profile.is_current:
+                    flags.append("顶栏主账号")
+                suffix = f" [{', '.join(flags)}]" if flags else ""
+                identity = profile.email or profile.account_id or "未知账号"
+                error = f" · {profile.error}" if profile.error else ""
+                internal = f" ({profile.name})" if profile.display_name != profile.name else ""
+                print(f"- {profile.display_name}{internal}: {identity}{suffix}{error}")
+            return 0
+
+        if args.account_command == "current":
+            profile = store.get_current()
+            if profile is None:
+                print("未设置顶栏主账号。")
+                return 1
+            print(f"{profile.display_name}\t{profile.email or profile.account_id or '-'}")
+            return 0
+
+        if args.account_command == "use":
+            profile = store.set_current(args.name)
+            print(f"顶栏主账号已设为：{profile.display_name}")
+            return 0
+
+        if args.account_command == "rename":
+            profile = store.set_display_name(args.name, args.display_name)
+            print(f"账号已重命名为：{profile.display_name}")
+            return 0
+
+    except AccountStoreError as exc:
+        print(f"账号操作失败：{exc}", file=sys.stderr)
+        return 1
+    return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -251,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="ChatGPT/Codex 登录文件路径（默认读取 ~/.codex/auth.json）",
     )
     menubar.add_argument("--base-url", default="https://chatgpt.com")
+    menubar.add_argument(
+        "--account-store",
+        default="~/.gpt-quota",
+        help="多账号凭据目录（默认 ~/.gpt-quota）",
+    )
     menubar.add_argument("--interval", type=int, default=60, help="自动刷新间隔（秒）")
     menubar.add_argument("--width", type=int, default=320)
     menubar.add_argument("--height", type=int, default=250)
@@ -258,6 +364,39 @@ def build_parser() -> argparse.ArgumentParser:
     menubar.add_argument("--install-shortcut", action="store_true", help="在桌面创建菜单栏启动按钮")
     menubar.add_argument("--shortcut-name", default="打开Codex顶栏", help="快捷按钮文件名（不带后缀）")
     menubar.set_defaults(func=cmd_menubar)
+
+    account = subparsers.add_parser("account", help="管理顶栏监控的 Codex 账号")
+    account.add_argument(
+        "--store-dir",
+        default="~/.gpt-quota",
+        help="多账号凭据目录（默认 ~/.gpt-quota）",
+    )
+    account.add_argument(
+        "--codex-auth-file",
+        default=DEFAULT_CODEX_AUTH_FILE,
+        help="Codex 当前登录文件（默认 ~/.codex/auth.json）",
+    )
+    account_subparsers = account.add_subparsers(dest="account_command", required=True)
+
+    account_import = account_subparsers.add_parser("import", help="导入一个 auth.json")
+    account_import.add_argument("name", help="账号名称，仅支持字母、数字、下划线和连字号")
+    account_import.add_argument("--display-name", help="菜单中显示的名称，可使用中文")
+    account_import.add_argument("--auth-file", default=DEFAULT_CODEX_AUTH_FILE)
+    account_import.add_argument("--current", action="store_true", help="同时设为顶栏主账号")
+    account_import.add_argument("--replace", action="store_true", help="覆盖同名账号")
+
+    account_list = account_subparsers.add_parser("list", help="列出已导入账号")
+    account_list.add_argument("--json", action="store_true")
+    account_subparsers.add_parser("current", help="查看顶栏主账号")
+
+    account_use = account_subparsers.add_parser("use", help="设置顶栏主账号，不改变 Codex 登录")
+    account_use.add_argument("name")
+
+    account_rename = account_subparsers.add_parser("rename", help="修改账号的菜单显示名")
+    account_rename.add_argument("name", help="内部账号名")
+    account_rename.add_argument("display_name", help="新的显示名，可使用中文")
+
+    account.set_defaults(func=cmd_account)
 
     return parser
 

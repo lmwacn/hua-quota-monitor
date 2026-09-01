@@ -124,3 +124,51 @@ uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
 ```
 
 顶栏应用同样会按 `--interval` 自动刷新，退出请从顶栏菜单选择“退出”。
+
+### 顶栏监控多个账号
+
+可以直接在顶栏的“管理账号”二级菜单操作：
+
+- “添加当前 ChatGPT 账号…”：为当前 `~/.codex/auth.json` 输入一个别名并保存。
+- “通过 ChatGPT 网页授权添加账号…”：打开 Codex 官方浏览器登录，授权成功后自动导入，不覆盖当前账号。
+- “从 auth.json 导入…”：通过 macOS 文件选择框选择其他账号的登录文件。
+- “更新当前账号凭据”：将 ChatGPT 最新刷新的登录态回写到已管理账号。
+- “打开账号存储目录”：在 Finder 中查看本机凭据目录。
+
+账号的详情二级菜单还可以“设为顶栏主账号”和“重命名账号…”。显示名支持中文、英文、数字和空格，顶栏的“顶栏主账号”会显示这个名称。
+
+网页授权使用 [`codex login` 官方流程](https://learn.chatgpt.com/docs/auth)，顶栏不读取你的账号密码。授权会在一次性隔离目录中进行，完成或失败后均会清理；由于浏览器可能已登录 ChatGPT，请在授权页确认选中的账号。
+
+也可以使用命令行。先把当前 ChatGPT/Codex 登录态导入为一个账号：
+
+```bash
+python main.py account import personal --display-name "个人 Pro" --current
+```
+
+切换到另一个 ChatGPT 账号并完成登录后，再导入一次：
+
+```bash
+python main.py account import work
+python main.py account list
+python main.py account rename work "工作账号"
+```
+
+如果已经准备了其他 `auth.json`，可以直接指定：
+
+```bash
+python main.py account import backup --auth-file /path/to/auth.json
+```
+
+再启动顶栏，“账号监控”二级菜单会展示每个账号的 5 小时额度、周额度、点数、重置卡和更新时间。当前顶栏主账号每 `--interval` 秒刷新，全部账号最快每 5 分钟刷新，也可以手动选择“刷新全部账号”。
+
+在非当前账号的详情菜单中选择“切换到此账号并重启 ChatGPT”，工具会：
+
+1. 请求 ChatGPT 正常退出，不会强制结束进程。
+2. 保存原账号的最新登录态。
+3. 原子替换 `~/.codex/auth.json`，然后重新打开 ChatGPT。
+
+账号凭据默认保存在 `~/.gpt-quota/accounts/`，目录权限为 `0700`，凭据文件权限为 `0600`。这些文件包含可用于登录的 token，不要上传、提交到 Git 或发送给他人。长时间没有使用的账号可能会显示登录态失效，需要重新登录后用 `--replace` 导入：
+
+```bash
+python main.py account import work --replace
+```
