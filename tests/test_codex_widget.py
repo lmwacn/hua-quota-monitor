@@ -19,7 +19,7 @@ class CodexWidgetFormattingTests(unittest.TestCase):
         self.assertEqual(_account_title_suffix(None), " · 等待刷新")
         self.assertEqual(
             _account_title_suffix({"usage": {"rate_limit": {"primary_window": {}}}}),
-            " · 5h 暂无",
+            " · 额度暂无",
         )
         self.assertEqual(_format_limit_item("5 小时", {}), "5 小时：暂无")
 
@@ -29,10 +29,29 @@ class CodexWidgetFormattingTests(unittest.TestCase):
                 "rate_limit": {"primary_window": {"used_percent": 27.6}}
             }
         }
-        self.assertEqual(_account_title_suffix(snapshot), " · 5h 剩余 72%")
+        self.assertEqual(_account_title_suffix(snapshot), " · 额度 剩余 72%")
         self.assertEqual(
             _format_limit_item("5 小时", {"used_percent": 27.6}),
             "5 小时：剩余 72%",
+        )
+
+    def test_account_title_uses_actual_window_duration(self) -> None:
+        def snapshot(seconds: int) -> dict:
+            return {
+                "usage": {
+                    "rate_limit": {
+                        "primary_window": {
+                            "used_percent": 53,
+                            "limit_window_seconds": seconds,
+                        }
+                    }
+                }
+            }
+
+        self.assertEqual(_account_title_suffix(snapshot(18_000)), " · 5 小时 剩余 47%")
+        self.assertEqual(_account_title_suffix(snapshot(604_800)), " · 周额度 剩余 47%")
+        self.assertEqual(
+            _account_title_suffix(snapshot(2_592_000)), " · 月额度 剩余 47%"
         )
 
     def test_account_alias_suggestion_is_safe_and_unique(self) -> None:

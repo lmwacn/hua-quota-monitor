@@ -84,8 +84,7 @@ python main.py codex
 
 它会读取 Codex 本机登录态，请求 `https://chatgpt.com/backend-api/wham/usage`，显示：
 
-- 5 小时窗口已用百分比和重置时间
-- 周窗口已用百分比和重置时间
+- 账号实际拥有的 5 小时、周或月度额度窗口及重置时间
 - Codex plan type
 - reset credits 数量
 - reset credits 明细和到期时间
@@ -159,7 +158,7 @@ python main.py account rename work "工作账号"
 python main.py account import backup --auth-file /path/to/auth.json
 ```
 
-再启动顶栏，“账号监控”二级菜单会展示每个账号的 5 小时额度、周额度、点数、重置卡和更新时间。当前顶栏主账号每 `--interval` 秒刷新，全部账号最快每 5 分钟刷新，也可以手动选择“刷新全部账号”。
+再启动顶栏，“账号监控”二级菜单会按接口返回的窗口时长，动态展示每个账号实际拥有的 5 小时、周或月度额度，以及点数、重置卡和更新时间。当前顶栏主账号每 `--interval` 秒刷新，全部账号最快每 5 分钟刷新，也可以手动选择“刷新全部账号”。
 
 在非当前账号的详情菜单中选择“切换到此账号并重启 ChatGPT”，工具会：
 

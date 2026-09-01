@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Any
 
 from src.codex_usage import get_codex_reset_credits, get_codex_usage
+from src.rate_windows import rate_limit_windows
 from src.web_auth import login_with_chatgpt
 
 
@@ -63,7 +64,7 @@ def _run_menubar_impl(
             self.summary_items = {}
             for key, title in (
                 ("account", "顶栏主账号：加载中"),
-                ("main", "主额度：刷新中"),
+                ("main", "额度：刷新中"),
                 ("main_reset", "重置时间：刷新中"),
                 ("balance", "点数：刷新中"),
                 ("credits", "可用重置卡：刷新中"),
@@ -306,9 +307,12 @@ def _run_menubar_impl(
         @objc.python_method
         def _set_summary(self, name: str, item: dict[str, Any]) -> None:
             usage, reset = item["usage"], item["reset"]
-            primary = (usage.get("rate_limit") or {}).get("primary_window") or {}
+            windows = rate_limit_windows(usage.get("rate_limit") or {})
+            window_label, primary = windows[0] if windows else ("额度", {})
             self.summary_items["account"].setTitle_(f"顶栏主账号：{name}")
-            self.summary_items["main"].setTitle_(_format_limit_item("主额度", primary))
+            self.summary_items["main"].setTitle_(
+                _format_limit_item(window_label, primary)
+            )
             self.summary_items["main_reset"].setTitle_(_format_reset_item(primary))
             balance = (usage.get("credits") or {}).get("balance")
             positive = _has_positive_balance(balance)
@@ -426,8 +430,12 @@ def _run_menubar_impl(
                 return
             rate = usage.get("rate_limit") or {}
             self._info(menu, f"计划：{usage.get('plan_type') or usage.get('plan') or '未知'}")
-            self._info(menu, _format_limit_item("5 小时", rate.get("primary_window") or {}))
-            self._info(menu, _format_limit_item("周额度", rate.get("secondary_window") or {}))
+            windows = rate_limit_windows(rate)
+            if windows:
+                for label, window in windows:
+                    self._info(menu, _format_limit_item(label, window))
+            else:
+                self._info(menu, "额度：暂无")
             balance = (usage.get("credits") or {}).get("balance")
             if _has_positive_balance(balance):
                 self._info(menu, f"点数：{_format_balance(balance)}（{_format_balance_usd(balance)}）")
@@ -876,12 +884,15 @@ def _account_title_suffix(result: dict[str, Any] | None) -> str:
     usage = result.get("usage")
     if usage is None:
         return " · 查询失败"
-    primary = (usage.get("rate_limit") or {}).get("primary_window") or {}
+    windows = rate_limit_windows(usage.get("rate_limit") or {})
+    if not windows:
+        return " · 额度暂无"
+    label, primary = windows[0]
     used_percent = primary.get("used_percent")
     if used_percent is None:
-        return " · 5h 暂无"
+        return f" · {label} 暂无"
     remaining = max(0, 100 - _to_percent(used_percent))
-    return f" · 5h 剩余 {remaining}%"
+    return f" · {label} 剩余 {remaining}%"
 
 
 def _short_error(error: str, limit: int = 90) -> str:

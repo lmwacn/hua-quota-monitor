@@ -4,6 +4,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
+from src.rate_windows import rate_limit_windows
+
 
 def print_usage_summary(
     buckets: list[dict[str, Any]],
@@ -168,12 +170,8 @@ def print_codex_reset_credits(payload: dict[str, Any]) -> None:
 def _print_rate_limit(title: str, rate_limit: dict[str, Any]) -> None:
     print()
     print(f"{title}：allowed={rate_limit.get('allowed')} limit_reached={rate_limit.get('limit_reached')}")
-    primary = rate_limit.get("primary_window")
-    secondary = rate_limit.get("secondary_window")
-    if primary:
-        print("  5 小时窗口：" + _format_window(primary))
-    if secondary:
-        print("  周窗口：" + _format_window(secondary))
+    for label, window in rate_limit_windows(rate_limit):
+        print(f"  {label}：" + _format_window(window))
 
 
 def _format_window(window: dict[str, Any]) -> str:
