@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from src.codex_usage import CodexUsageError, get_codex_reset_credits, get_codex_usage
+from src.codex_usage import (
+    CodexUsageError,
+    get_codex_reset_credits,
+    get_codex_usage,
+    load_codex_auth,
+)
+from src.usage_monitor import UsageMonitor
 
 
 DEFAULT_DASHBOARD_PORT = 48763
@@ -35,6 +41,7 @@ def run_dashboard(
     auth_file: Path,
     base_url: str,
     open_browser: bool,
+    store_dir: Path = Path("~/.hua-quota").expanduser(),
 ) -> str:
     actual_port = find_available_port(host, port)
     web_dir = Path(__file__).resolve().parent.parent / "web"
@@ -45,6 +52,7 @@ def run_dashboard(
     Handler.web_dir = web_dir
     Handler.auth_file = auth_file
     Handler.base_url = base_url
+    Handler.usage_monitor = UsageMonitor(store_dir / "usage-history.sqlite3")
 
     server = ThreadingHTTPServer((host, actual_port), Handler)
     url = f"http://{host}:{actual_port}"
@@ -65,6 +73,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     web_dir: Path
     auth_file: Path
     base_url: str
+    usage_monitor: UsageMonitor
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -99,13 +108,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _handle_codex(self) -> None:
         try:
-            payload = {
-                "usage": get_codex_usage(auth_path=self.auth_file, base_url=self.base_url),
-                "reset_credits": get_codex_reset_credits(auth_path=self.auth_file, base_url=self.base_url),
-            }
-            self._send_json(200, payload)
+            auth = load_codex_auth(self.auth_file)
+            account_key = auth.account_id or str(self.auth_file.resolve())
+        except CodexUsageError:
+            account_key = str(self.auth_file.resolve())
+        usage_error = None
+        try:
+            usage = get_codex_usage(auth_path=self.auth_file, base_url=self.base_url)
         except CodexUsageError as exc:
-            self._send_json(500, {"error": str(exc)})
+            usage_error = str(exc)
+            cached = self.usage_monitor.cached_usage(account_key)
+            if cached is None:
+                self._send_json(500, {"error": usage_error})
+                return
+            usage, observed_at = cached
+            cached_response = True
+        else:
+            observed_at = self.usage_monitor.record_success(account_key, usage)
+            cached_response = False
+
+        reset_error = None
+        try:
+            reset_credits = get_codex_reset_credits(
+                auth_path=self.auth_file, base_url=self.base_url
+            )
+        except CodexUsageError as exc:
+            reset_credits = {}
+            reset_error = str(exc)
+
+        self._send_json(
+            200,
+            {
+                "usage": usage,
+                "reset_credits": reset_credits,
+                "history": self.usage_monitor.history(account_key, hours=24),
+                "meta": {
+                    "cached": cached_response,
+                    "observed_at": observed_at,
+                    "usage_error": usage_error,
+                    "reset_error": reset_error,
+                },
+            },
+        )
 
     def _serve_file(self, path: Path) -> None:
         try:

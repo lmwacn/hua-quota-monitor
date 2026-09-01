@@ -37,6 +37,8 @@ class CodexWidgetFormattingTests(unittest.TestCase):
             _format_limit_item("5 小时", {"used_percent": 27.6}),
             "5 小时：剩余 72%",
         )
+        snapshot["usage_cached"] = True
+        self.assertEqual(_account_title_suffix(snapshot), " · 额度 剩余 72% · 缓存")
 
     def test_account_title_uses_actual_window_duration(self) -> None:
         def snapshot(seconds: int) -> dict:

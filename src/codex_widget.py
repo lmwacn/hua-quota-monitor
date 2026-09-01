@@ -13,6 +13,7 @@ from typing import Any
 
 from src.codex_usage import get_codex_reset_credits, get_codex_usage
 from src.rate_windows import rate_limit_windows
+from src.usage_monitor import UsageMonitor, primary_window_key
 from src.web_auth import login_with_chatgpt
 
 
@@ -83,6 +84,13 @@ def _run_menubar_impl(
             accounts_root.setSubmenu_(self.accounts_menu)
             self.menu.addItem_(accounts_root)
             self._info(self.accounts_menu, "账号列表：加载中")
+            self.progress_menu = AppKit.NSMenu.alloc().init()
+            progress_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                "额度消耗监控", None, ""
+            )
+            progress_root.setSubmenu_(self.progress_menu)
+            self.menu.addItem_(progress_root)
+            self._info(self.progress_menu, "等待首次采样")
             self.menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self._action(self.menu, "刷新当前账号", "refreshCurrent:")
             self._action(self.menu, "刷新全部账号", "refreshAll:")
@@ -189,6 +197,7 @@ def _run_menubar_impl(
         @objc.python_method
         def _fetch_profile(self, profile: Any, active_name: str | None) -> dict[str, Any]:
             name = str(_profile_value(profile, "name") or "未命名账号")
+            account_key = _account_monitor_key(profile, name)
             # ChatGPT refreshes only the canonical auth cache. Read it for the
             # active account so monitoring does not use a stale imported token.
             path = (
@@ -211,6 +220,16 @@ def _run_menubar_impl(
                 usage = get_codex_usage(auth_path=path, base_url=self.base_url)
             except Exception as exc:
                 errors.append(f"额度：{exc}")
+                cached = self.usage_monitor.cached_usage(account_key)
+                if cached is not None:
+                    usage, usage_observed_at = cached
+                    usage_cached = True
+                else:
+                    usage_observed_at = None
+                    usage_cached = False
+            else:
+                usage_observed_at = self.usage_monitor.record_success(account_key, usage)
+                usage_cached = False
             try:
                 reset = get_codex_reset_credits(auth_path=path, base_url=self.base_url)
             except Exception as exc:
@@ -221,6 +240,9 @@ def _run_menubar_impl(
                 "reset": reset,
                 "error": "；".join(errors) if errors else None,
                 "updated": datetime.now(),
+                "usage_cached": usage_cached,
+                "usage_observed_at": usage_observed_at,
+                "account_key": account_key,
             }
 
         @objc.python_method
@@ -291,6 +313,7 @@ def _run_menubar_impl(
             )
             if current is None or current["usage"] is None:
                 self._set_failed_summary()
+                self._build_progress_menu(None)
             else:
                 self._set_summary(selected_display_name or selected, current)
             self._run_pending_refresh()
@@ -315,11 +338,12 @@ def _run_menubar_impl(
             windows = rate_limit_windows(usage.get("rate_limit") or {})
             window_label, primary = windows[0] if windows else ("额度", {})
             self.summary_items["account"].setTitle_(
-                _format_account_summary(name, item.get("updated"))
+                _format_account_summary(name, _usage_observed_datetime(item))
             )
-            self.summary_items["main"].setTitle_(
-                _format_limit_item(window_label, primary)
-            )
+            limit_title = _format_limit_item(window_label, primary)
+            if item.get("usage_cached"):
+                limit_title += f" · 缓存 {_format_cache_age(item.get('usage_observed_at'))}"
+            self.summary_items["main"].setTitle_(limit_title)
             self.summary_items["main_reset"].setTitle_(_format_reset_item(primary))
             balance = (usage.get("credits") or {}).get("balance")
             positive = _has_positive_balance(balance)
@@ -338,7 +362,41 @@ def _run_menubar_impl(
             title = "—" if used_percent is None else f"{max(0, 100 - _to_percent(used_percent))}%"
             if positive:
                 title += f" · {_format_balance(balance)}（{_format_balance_usd(balance)}）"
+            if item.get("usage_cached"):
+                title += "*"
             self.status_item.button().setTitle_(title)
+            self._build_progress_menu(item)
+
+        @objc.python_method
+        def _build_progress_menu(self, item: dict[str, Any] | None) -> None:
+            self.progress_menu.removeAllItems()
+            if item is None or item.get("usage") is None:
+                self._info(self.progress_menu, "暂无可用采样")
+                return
+            window_key = primary_window_key(item["usage"])
+            progress = (
+                self.usage_monitor.progress(item["account_key"], window_key)
+                if window_key else None
+            )
+            if progress is None:
+                self._info(self.progress_menu, "等待首次采样")
+                return
+            self._info(
+                self.progress_menu,
+                f"{progress['label']}：本周期已用 {_format_progress_percent(progress['used_percent'])}",
+            )
+            self._info(
+                self.progress_menu,
+                f"距上次采样：{_format_progress_delta(progress['delta_previous'])}",
+            )
+            self._info(
+                self.progress_menu,
+                f"最近 1 小时：{_format_progress_delta(progress['delta_1h'])}",
+            )
+            observed = datetime.fromtimestamp(progress["observed_at"])
+            self._info(self.progress_menu, f"最后成功采样：{observed.strftime('%-m月%-d日 %H:%M:%S')}")
+            if item.get("usage_cached"):
+                self._info(self.progress_menu, "当前为缓存数据，本次失败未记录")
 
         @objc.python_method
         def _build_credit_menu(self, credits: list[dict[str, Any]]) -> None:
@@ -429,6 +487,13 @@ def _run_menubar_impl(
                 self._info(menu, "状态：登录态已失效或查询失败")
                 self._info(menu, _short_error(result["error"] or "未知错误"))
                 return
+            if result.get("usage_cached"):
+                self._info(
+                    menu,
+                    f"状态：使用 {_format_cache_age(result.get('usage_observed_at'))} 的缓存",
+                )
+                if result.get("error"):
+                    self._info(menu, _short_error(result["error"]))
             rate = usage.get("rate_limit") or {}
             self._info(menu, f"计划：{usage.get('plan_type') or usage.get('plan') or '未知'}")
             windows = rate_limit_windows(rate)
@@ -757,6 +822,12 @@ def _run_menubar_impl(
     controller.auth_file = Path(auth_file)
     controller.base_url = base_url
     controller.account_store = account_store
+    monitor_root = (
+        account_store.root
+        if account_store is not None
+        else Path("~/.hua-quota").expanduser()
+    )
+    controller.usage_monitor = UsageMonitor(monitor_root / "usage-history.sqlite3")
     controller.interval = max(60, int(interval))
     controller.all_interval = max(300, controller.interval)
     controller.refreshing = False
@@ -878,7 +949,46 @@ def _account_title_suffix(result: dict[str, Any] | None) -> str:
     if used_percent is None:
         return f" · {label} 暂无"
     remaining = max(0, 100 - _to_percent(used_percent))
-    return f" · {label} 剩余 {remaining}%"
+    cached = " · 缓存" if result.get("usage_cached") else ""
+    return f" · {label} 剩余 {remaining}%{cached}"
+
+
+def _account_monitor_key(profile: Any, fallback: str) -> str:
+    return str(_profile_value(profile, "account_id") or fallback)
+
+
+def _usage_observed_datetime(item: dict[str, Any]) -> datetime | None:
+    value = item.get("usage_observed_at")
+    try:
+        return datetime.fromtimestamp(float(value))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return item.get("updated")
+
+
+def _format_cache_age(observed_at: Any) -> str:
+    try:
+        seconds = max(0, int(datetime.now().timestamp() - float(observed_at)))
+    except (TypeError, ValueError):
+        return "时间未知"
+    if seconds < 60:
+        return "刚刚"
+    return f"{seconds // 60} 分钟前"
+
+
+def _format_progress_percent(value: Any) -> str:
+    try:
+        return f"{float(value):.1f}%"
+    except (TypeError, ValueError):
+        return "暂无"
+
+
+def _format_progress_delta(value: Any) -> str:
+    if value is None:
+        return "等待更多采样"
+    try:
+        return f"+{float(value):.1f} 个百分点"
+    except (TypeError, ValueError):
+        return "暂无"
 
 
 def _short_error(error: str, limit: int = 90) -> str:

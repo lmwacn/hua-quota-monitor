@@ -161,6 +161,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         auth_file=Path(args.auth_file).expanduser(),
         base_url=args.base_url,
         open_browser=not args.no_open,
+        store_dir=Path(args.account_store).expanduser(),
     )
     return 0
 
@@ -339,6 +340,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="ChatGPT/Codex 登录文件路径（默认读取 ~/.codex/auth.json）",
     )
     dashboard.add_argument("--base-url", default="https://chatgpt.com")
+    dashboard.add_argument(
+        "--account-store",
+        default="~/.hua-quota",
+        help="额度历史数据目录（默认 ~/.hua-quota）",
+    )
     dashboard.add_argument("--no-open", action="store_true", help="启动后不自动打开浏览器")
     dashboard.set_defaults(func=cmd_dashboard)
 
