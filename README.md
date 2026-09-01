@@ -166,7 +166,7 @@ python main.py account import backup --auth-file /path/to/auth.json
 2. 保存原账号的最新登录态。
 3. 原子替换 `~/.codex/auth.json`，然后重新打开 ChatGPT。
 
-账号凭据默认保存在 `~/.gpt-quota/accounts/`，目录权限为 `0700`，凭据文件权限为 `0600`。这些文件包含可用于登录的 token，不要上传、提交到 Git 或发送给他人。长时间没有使用的账号可能会显示登录态失效，需要重新登录后用 `--replace` 导入：
+账号凭据默认保存在 `~/.hua-quota/accounts/`，目录权限为 `0700`，凭据文件权限为 `0600`。这些文件包含可用于登录的 token，不要上传、提交到 Git 或发送给他人。长时间没有使用的账号可能会显示登录态失效，需要重新登录后用 `--replace` 导入：
 
 ```bash
 python main.py account import work --replace

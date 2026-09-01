@@ -12,6 +12,7 @@ from src.account_store import (
     AccountNotFoundError,
     AccountStore,
     AccountStoreError,
+    DEFAULT_STORE_ROOT,
     InvalidAccountNameError,
     InvalidAuthFileError,
     InvalidDisplayNameError,
@@ -42,6 +43,9 @@ def _mode(path: Path) -> int:
 
 
 class AccountStoreTests(unittest.TestCase):
+    def test_default_store_uses_hua_prefix(self) -> None:
+        self.assertEqual(DEFAULT_STORE_ROOT, Path.home() / ".hua-quota")
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         base = Path(self.temporary.name)

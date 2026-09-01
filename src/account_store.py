@@ -17,7 +17,7 @@ from typing import Any, Iterator
 import fcntl
 
 
-DEFAULT_STORE_ROOT = Path("~/.gpt-quota").expanduser()
+DEFAULT_STORE_ROOT = Path("~/.hua-quota").expanduser()
 DEFAULT_CANONICAL_AUTH_PATH = Path("~/.codex/auth.json").expanduser()
 _ACCOUNT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _STATE_VERSION = 2

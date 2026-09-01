@@ -354,8 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     menubar.add_argument("--base-url", default="https://chatgpt.com")
     menubar.add_argument(
         "--account-store",
-        default="~/.gpt-quota",
-        help="多账号凭据目录（默认 ~/.gpt-quota）",
+        default="~/.hua-quota",
+        help="多账号凭据目录（默认 ~/.hua-quota）",
     )
     menubar.add_argument("--interval", type=int, default=60, help="自动刷新间隔（秒）")
     menubar.add_argument("--width", type=int, default=320)
@@ -368,8 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     account = subparsers.add_parser("account", help="管理顶栏监控的 Codex 账号")
     account.add_argument(
         "--store-dir",
-        default="~/.gpt-quota",
-        help="多账号凭据目录（默认 ~/.gpt-quota）",
+        default="~/.hua-quota",
+        help="多账号凭据目录（默认 ~/.hua-quota）",
     )
     account.add_argument(
         "--codex-auth-file",
