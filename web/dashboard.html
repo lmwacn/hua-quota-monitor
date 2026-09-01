@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codex 额度面板</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f8;
+        --panel: #ffffff;
+        --ink: #1f2328;
+        --muted: #69707d;
+        --line: #d9dee7;
+        --blue: #2563eb;
+        --green: #16825d;
+        --amber: #b7791f;
+        --red: #c2413b;
+        --shadow: 0 10px 28px rgba(20, 31, 48, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+      }
+
+      .shell {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0 40px;
+      }
+
+      header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 8px 0 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.15;
+        font-weight: 760;
+        letter-spacing: 0;
+      }
+
+      .meta {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      button {
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        padding: 0 14px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.primary {
+        border-color: var(--blue);
+        background: var(--blue);
+        color: white;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+        padding-top: 22px;
+      }
+
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .tile,
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .tile {
+        min-height: 106px;
+        padding: 16px;
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .value {
+        margin-top: 8px;
+        font-size: 26px;
+        font-weight: 760;
+        line-height: 1.1;
+      }
+
+      .hint {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+
+      .panel {
+        padding: 18px;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .limits {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .limit-row {
+        min-width: 0;
+      }
+
+      .limit-row:first-child {
+        border-top: 0;
+        padding-top: 0;
+      }
+
+      .limit-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+        font-weight: 700;
+      }
+
+      .pill {
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: #edf2ff;
+        color: #2549a8;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .bar {
+        height: 12px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: #e8ebf0;
+      }
+
+      .fill {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: var(--green);
+        transition: width 220ms ease;
+      }
+
+      .fill.warn {
+        background: var(--amber);
+      }
+
+      .fill.danger {
+        background: var(--red);
+      }
+
+      .window-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .window {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 650;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .error {
+        display: none;
+        border: 1px solid #f0b5b0;
+        background: #fff7f6;
+        color: #9f2f2b;
+        border-radius: 8px;
+        padding: 12px 14px;
+      }
+
+      @media (max-width: 860px) {
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .summary,
+        .limits,
+        .window-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div>
+          <h1>Codex 额度面板</h1>
+          <div class="meta" id="account">正在读取本机登录态...</div>
+        </div>
+        <div class="actions">
+          <button id="refresh" class="primary">刷新</button>
+        </div>
+      </header>
+
+      <main>
+        <div class="error" id="error"></div>
+
+        <section class="summary">
+          <div class="tile">
+            <div class="label">计划</div>
+            <div class="value" id="plan">-</div>
+            <div class="hint">ChatGPT 账号对应的 Codex plan</div>
+          </div>
+          <div class="tile">
+            <div class="label">主额度 5 小时</div>
+            <div class="value" id="main5h">-</div>
+            <div class="hint" id="main5hReset">-</div>
+          </div>
+          <div class="tile">
+            <div class="label">主额度周窗口</div>
+            <div class="value" id="mainWeek">-</div>
+            <div class="hint" id="mainWeekReset">-</div>
+          </div>
+          <div class="tile">
+            <div class="label">重置卡</div>
+            <div class="value" id="creditCount">-</div>
+            <div class="hint">可用 Full reset 数量</div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>额度窗口</h2>
+          </div>
+          <div class="limits" id="limits"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>重置卡到期时间</h2>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>类型</th>
+                <th>获得时间</th>
+                <th>到期时间</th>
+                <th>剩余</th>
+              </tr>
+            </thead>
+            <tbody id="credits"></tbody>
+          </table>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+
+      function fmtTime(value) {
+        if (!value) return "-";
+        return new Date(value).toLocaleString("zh-CN", { hour12: false });
+      }
+
+      function fmtUnix(seconds) {
+        if (!seconds) return "-";
+        return new Date(seconds * 1000).toLocaleString("zh-CN", { hour12: false });
+      }
+
+      function fmtDuration(seconds) {
+        if (seconds == null) return "-";
+        if (seconds <= 0) return "已到期";
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const parts = [];
+        if (d) parts.push(`${d}天`);
+        if (h) parts.push(`${h}小时`);
+        if (m || !parts.length) parts.push(`${m}分钟`);
+        return parts.join("");
+      }
+
+      function pct(value) {
+        return Number.isFinite(Number(value)) ? Number(value) : 0;
+      }
+
+      function barClass(used) {
+        if (used >= 85) return "danger";
+        if (used >= 65) return "warn";
+        return "";
+      }
+
+      function windowBlock(label, win) {
+        const used = pct(win?.used_percent);
+        return `
+          <div class="window">
+            <div class="limit-title">
+              <span>${label}</span>
+              <span class="pill">剩余约 ${Math.max(0, 100 - used)}%</span>
+            </div>
+            <div class="bar"><div class="fill ${barClass(used)}" style="width:${used}%"></div></div>
+            <div class="hint">已用 ${used}% · ${fmtDuration(win?.reset_after_seconds)} 后重置 · ${fmtUnix(win?.reset_at)}</div>
+          </div>`;
+      }
+
+      function limitSection(title, rateLimit) {
+        return `
+          <div class="limit-row">
+            <div class="limit-title">
+              <span>${title}</span>
+              <span class="pill">${rateLimit?.limit_reached ? "已触顶" : "可用"}</span>
+            </div>
+            <div class="window-grid">
+              ${windowBlock("5 小时窗口", rateLimit?.primary_window)}
+              ${windowBlock("周窗口", rateLimit?.secondary_window)}
+            </div>
+          </div>`;
+      }
+
+      function render(data) {
+        const usage = data.usage || {};
+        const resetCredits = data.reset_credits || {};
+        const main = usage.rate_limit || {};
+        const main5 = main.primary_window || {};
+        const mainWeek = main.secondary_window || {};
+        const credits = resetCredits.credits || [];
+
+        el("account").textContent = `${usage.email || "-"} · ${usage.account_id || "-"}`;
+        el("plan").textContent = usage.plan_type || "-";
+        el("main5h").textContent = `${pct(main5.used_percent)}%`;
+        el("main5hReset").textContent = `${fmtDuration(main5.reset_after_seconds)} 后重置`;
+        el("mainWeek").textContent = `${pct(mainWeek.used_percent)}%`;
+        el("mainWeekReset").textContent = `${fmtDuration(mainWeek.reset_after_seconds)} 后重置`;
+        el("creditCount").textContent = String(usage.rate_limit_reset_credits?.available_count ?? credits.length);
+        const additional = usage.additional_rate_limits || [];
+        el("limits").innerHTML =
+          limitSection("主额度", main) +
+          additional.map((item) => limitSection(item.limit_name || item.metered_feature || "附加额度", item.rate_limit)).join("");
+
+        el("credits").innerHTML = credits.length
+          ? credits
+              .map((credit) => {
+                const expires = credit.expires_at ? new Date(credit.expires_at) : null;
+                const remaining = expires ? fmtDuration(Math.floor((expires - Date.now()) / 1000)) : "-";
+                return `<tr>
+                  <td>${credit.status || "-"}</td>
+                  <td>${credit.title || "-"}</td>
+                  <td>${fmtTime(credit.granted_at)}</td>
+                  <td>${fmtTime(credit.expires_at)}</td>
+                  <td>${remaining}</td>
+                </tr>`;
+              })
+              .join("")
+          : '<tr><td colspan="5">没有可显示的重置卡</td></tr>';
+      }
+
+      async function load() {
+        el("error").style.display = "none";
+        el("refresh").disabled = true;
+        try {
+          const response = await fetch("/api/codex", { cache: "no-store" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "读取失败");
+          render(data);
+        } catch (error) {
+          el("error").textContent = error.message;
+          el("error").style.display = "block";
+        } finally {
+          el("refresh").disabled = false;
+        }
+      }
+
+      el("refresh").addEventListener("click", load);
+      load();
+      setInterval(load, 60_000);
+    </script>
+  </body>
+</html>

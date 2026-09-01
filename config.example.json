@@ -1,0 +1,9 @@
+{
+  "notes": "复制为 config.json 后可按需扩展。目前 CLI 主要读取 .env 中的 OPENAI_ADMIN_KEY。",
+  "default_window": "5h",
+  "default_group_by": ["model"],
+  "chatgpt": {
+    "cookie_file": "./cookies.txt",
+    "url": "https://chatgpt.com/这里填写你抓到的额度相关接口"
+  }
+}

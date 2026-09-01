@@ -1,0 +1,7 @@
+.env
+config.json
+cookies.txt
+private/
+*.log
+__pycache__/
+*.py[cod]
