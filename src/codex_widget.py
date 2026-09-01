@@ -94,23 +94,18 @@ def _run_menubar_impl(
             self.menu.addItem_(manage_accounts_root)
             self._action(
                 self.manage_accounts_menu,
-                "添加当前 ChatGPT 账号…",
+                "添加当前账号…",
                 "addCurrentAccount:",
             )
             self._action(
                 self.manage_accounts_menu,
-                "通过 ChatGPT 网页授权添加账号…",
+                "网页登录添加账号…",
                 "webAuthorizeAccount:",
             )
             self._action(
                 self.manage_accounts_menu,
                 "从 auth.json 导入…",
                 "importAuthFile:",
-            )
-            self._action(
-                self.manage_accounts_menu,
-                "更新当前账号凭据",
-                "snapshotCurrent:",
             )
             self.manage_accounts_menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self._action(
@@ -618,38 +613,6 @@ def _run_menubar_impl(
             if url is None:
                 return
             self._import_account_source(Path(str(url.path())))
-
-        def snapshotCurrent_(self, sender: Any) -> None:
-            if self.account_store is None:
-                self._alert("无法更新凭据", "当前未启用多账号存储。")
-                return
-            canonical = Path(self.account_store.canonical_auth_path)
-            if not canonical.is_file():
-                self._alert(
-                    "未找到当前授权",
-                    "请先在 ChatGPT/Codex 中完成登录。",
-                )
-                return
-            try:
-                profile = self.account_store.snapshot_canonical()
-            except Exception:
-                self._alert(
-                    "更新凭据失败",
-                    "无法读取或保存当前授权文件，请检查文件和目录权限。",
-                )
-                return
-            if profile is None:
-                self._alert(
-                    "已保存未识别账号的备份",
-                    "当前 ChatGPT 授权与已导入账号均不匹配，"
-                    "已将其安全保存到账号存储目录的 backups 文件夹。",
-                )
-            else:
-                self._alert(
-                    "凭据已更新",
-                    f"已保存“{_profile_display_name(profile)}”的最新 ChatGPT 授权。",
-                )
-            self.refreshAll_(None)
 
         def openAccountStore_(self, sender: Any) -> None:
             if self.account_store is None:
