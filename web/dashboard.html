@@ -217,6 +217,12 @@
         padding: 12px;
       }
 
+      .window > .hint {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
       table {
         width: 100%;
         border-collapse: collapse;
@@ -384,9 +390,12 @@
         return new Date(value).toLocaleString("zh-CN", { hour12: false });
       }
 
-      function fmtUnix(seconds) {
+      function fmtShortUnix(seconds) {
         if (!seconds) return "-";
-        return new Date(seconds * 1000).toLocaleString("zh-CN", { hour12: false });
+        const date = new Date(seconds * 1000);
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        return `${date.getMonth() + 1}/${date.getDate()} ${hours}:${minutes}`;
       }
 
       function fmtDuration(seconds) {
@@ -400,6 +409,17 @@
         if (h) parts.push(`${h}小时`);
         if (m || !parts.length) parts.push(`${m}分钟`);
         return parts.join("");
+      }
+
+      function fmtCompactDuration(seconds) {
+        if (seconds == null) return "-";
+        if (seconds <= 0) return "已到期";
+        const d = Math.floor(seconds / 86400);
+        const h = Math.floor((seconds % 86400) / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (d) return `${d}天${h ? `${h}小时` : ""}`;
+        if (h) return `${h}小时${m ? `${m}分钟` : ""}`;
+        return `${Math.max(1, m)}分钟`;
       }
 
       function pct(value) {
@@ -462,6 +482,7 @@
             </div>`;
         }
         const used = pct(win?.used_percent);
+        const resetText = `${fmtCompactDuration(win?.reset_after_seconds)}后重置 · ${fmtShortUnix(win?.reset_at)}`;
         return `
           <div class="window">
             <div class="limit-title">
@@ -469,7 +490,7 @@
               <span class="pill">剩余约 ${Math.max(0, 100 - used)}%</span>
             </div>
             <div class="bar"><div class="fill ${barClass(used)}" style="width:${used}%"></div></div>
-            <div class="hint">已用 ${used}% · ${fmtDuration(win?.reset_after_seconds)} 后重置 · ${fmtUnix(win?.reset_at)}</div>
+            <div class="hint" title="${resetText}">${resetText}</div>
           </div>`;
       }
 
@@ -505,7 +526,7 @@
             : `${pct(win.used_percent)}%`;
           el(`mainWindow${number}Reset`).textContent = win.unlimited
             ? "该账号无 5 小时额度限制"
-            : `${fmtDuration(win.reset_after_seconds)} 后重置`;
+            : `${fmtCompactDuration(win.reset_after_seconds)}后重置`;
         });
       }
 
