@@ -55,7 +55,7 @@ def login_with_chatgpt(
         raise ValueError("授权超时时间必须大于 0")
 
     executable = _resolve_codex_executable(codex_executable)
-    with tempfile.TemporaryDirectory(prefix="gpt-quota-codex-login-") as temp_name:
+    with tempfile.TemporaryDirectory(prefix="hua-quota-monitor-login-") as temp_name:
         isolated_home = Path(temp_name)
         isolated_home.chmod(0o700)
         environment = os.environ.copy()

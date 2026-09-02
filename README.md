@@ -1,181 +1,187 @@
-# GPT 订阅/用量查询
+# hua-quota-monitor
 
-这个工具分两条线：
+一个本地优先的 Codex 额度监控工具，提供 macOS 菜单栏、多账号管理、Web 趋势面板和命令行查询。
 
-1. 官方 OpenAI API 用量和费用：使用 OpenAI Admin API Key 查询，稳定可靠。
-2. ChatGPT 网页订阅额度：使用本机登录态请求你指定的网页端接口，作为探测器预留。网页端接口不是公开 API，字段和地址可能变化。
+> [!IMPORTANT]
+> 本项目是社区工具，与 OpenAI 无隶属或官方合作关系。Codex/ChatGPT 额度查询依赖网页端接口，该接口不是公开 API，可能随时发生变化。
 
-## 准备
+## 功能
 
-```bash
-cp .env.example .env
-```
+- 在 macOS 菜单栏显示主账号剩余额度、重置时间、点数和重置卡。
+- 同时监控多个 Codex/ChatGPT 账号，支持设置主账号、重命名和切换登录账号。
+- 将每次成功读取的额度写入本地 SQLite，按账号和额度窗口独立保存。
+- 提供最近 24 小时的 Web 额度趋势，支持多账号切换。
+- 页面优先读取本地缓存，再在后台并行更新实时额度。
+- 读取失败时可继续展示 10 分钟内的最后一次成功数据，超时后不再显示。
+- 支持查询官方 OpenAI Admin Usage/Costs API。
+- 提供 JSON 输出，方便脚本和其他工具集成。
 
-然后把 `.env` 里的 `OPENAI_ADMIN_KEY` 换成你的 Admin API Key。Admin Key 可在 OpenAI Platform 组织设置里创建。
+## 运行要求
 
-## 查询最近 5 小时 API 用量和费用
+- Python 3.10 或更高版本。
+- macOS 12 或更高版本（仅菜单栏功能需要）。
+- 已登录的 Codex CLI 或 ChatGPT/Codex 客户端，默认读取 `~/.codex/auth.json`。
+- 推荐安装 [`uv`](https://docs.astral.sh/uv/) 管理虚拟环境。
 
-```bash
-python main.py api --window 5h
-```
-
-## 查询本周，并按模型分组
-
-```bash
-python main.py api --window week --group-by model
-```
-
-## 查询本月费用
+## 快速开始
 
 ```bash
-python main.py api --kind costs --window month
+git clone https://github.com/lmwacn/hua-quota-monitor.git
+cd hua-quota-monitor
+uv venv .venv
+uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
 ```
 
-## 查询其他 Usage 类型
+启动 macOS 菜单栏：
 
 ```bash
-python main.py api --kind usage --usage-type images --window week
-python main.py api --kind usage --usage-type audio_transcriptions --window 30d
-python main.py api --kind usage --usage-type web_searches --window today --group-by model
+.venv/bin/python main.py menubar
 ```
 
-可选类型包括：`completions`、`embeddings`、`moderations`、`images`、`audio_speeches`、`audio_transcriptions`、`vector_stores`、`code_interpreter_sessions`、`file_searches`、`web_searches`。
+首次启动时，如果存在 `~/.codex/auth.json`，当前账号会自动加入监控。点击菜单栏图标可以刷新所有账号、管理账号或打开额度趋势面板。
 
-## 输出原始 JSON
-
-```bash
-python main.py api --window 5h --group-by model --json
-```
-
-## 自定义日期范围
-
-```bash
-python main.py api --window 2026-07-01..2026-07-02 --bucket 1h
-```
-
-日期不带时区时按本机时区解释。
-
-## ChatGPT 网页端登录态探测
-
-如果你从浏览器导出了 Cookie，可以保存成 `cookies.txt`。支持两种格式：
-
-- 一整行 Cookie header：`a=b; c=d`
-- Netscape cookie 文件格式
-
-然后请求你抓到的 ChatGPT 网页端接口：
-
-```bash
-python main.py chatgpt \
-  --url "https://chatgpt.com/某个你抓到的接口" \
-  --cookie-file ./cookies.txt
-```
-
-工具会返回原始 JSON，并自动扫描 `quota`、`limit`、`usage`、`remaining`、`reset` 等疑似额度字段。
-
-注意：ChatGPT 网页端额度接口不是官方公开 API，可能会变化。不要把 cookie、token、响应日志上传到公开仓库。
-
-## 查询 Codex 额度
-
-项目默认读取当前 ChatGPT/Codex 客户端的用户级登录文件 `~/.codex/auth.json`，可以直接运行：
-
-```bash
-python main.py codex
-```
-
-它会读取 Codex 本机登录态，请求 `https://chatgpt.com/backend-api/wham/usage`，显示：
-
-- 账号实际拥有的 5 小时、周或月度额度窗口及重置时间
-- Codex plan type
-- reset credits 数量
-- reset credits 明细和到期时间
-- 附加额度窗口
-
-输出原始 JSON：
-
-```bash
-python main.py codex --json
-```
-
-如果登录态过期，先在 ChatGPT 客户端重新登录，或运行 `codex login`。也可以用 `--auth-file` 指定其他登录文件。
-
-## 启动可视化面板
+如果只需要 Web 面板，不需要安装 PyObjC：
 
 ```bash
 python main.py dashboard
 ```
 
-默认监听 `127.0.0.1:48763`。如果端口被占用，会自动在后续端口里找一个可用端口。
-
-也可以指定端口：
+面板默认监听 `127.0.0.1:48763`；端口被占用时会自动尝试后续端口。指定端口或禁止自动打开浏览器：
 
 ```bash
 python main.py dashboard --port 49173
+python main.py dashboard --no-open
 ```
 
-## 启动 macOS 顶栏额度显示
-
-顶栏显示主额度剩余百分比、点数和按 25 点约折算的美元余额。点击图标后，主账号名称后会显示最近刷新的小时和分钟；重置卡数量合并在“重置卡到期时间”二级菜单标题中。重置时间按本机时区显示具体日期、时间及剩余倒计时：
+## 查询 Codex 额度
 
 ```bash
-uv venv .venv
-uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
-.venv/bin/python main.py menubar
+python main.py codex
+python main.py codex --json
 ```
 
-顶栏应用同样会按 `--interval` 自动刷新，退出请从顶栏菜单选择“退出”。
-每次刷新时，如果当前 `~/.codex/auth.json` 能匹配已管理账号，顶栏应用会自动将可能已刷新的登录凭据同步回该账号。
-
-额度读取成功时，程序会将每个账号、每个额度窗口的百分比和采样时间记录到 `~/.hua-quota/usage-history.sqlite3`。即使百分比没有变化，每次成功刷新也会留下独立采样。读取失败时会继续显示最后一次成功数据，并标记为缓存；缓存有效期为 10 分钟，超时后不再显示百分比。失败刷新不会续期缓存，也不会写入历史采样。数据库不保存 token 或 Cookie，历史默认保留 30 天。
-
-额度消耗趋势统一在 Web 面板查看。选择顶栏菜单的“打开额度趋势面板”会自动启动 Web 服务，并打开当前账号最近 24 小时的消耗趋势。如果顶栏使用了自定义 `--account-store`，面板会自动使用同一数据库。
-当主额度接口不返回 5 小时窗口时，Web 面板会显示“5 小时·无限额”卡片；该卡片只是界面说明，不会作为虚假采样写入额度历史。
-Web 面板加载时会先显示 10 分钟内的本地 SQLite 快照，再在后台并行更新额度和重置卡数据；实时结果返回后页面会自动替换，无需手动刷新。
-已导入的多个账号会出现在 Web 面板顶部的账号选择器中，默认选中顶栏主账号。切换只会查看相应账号的额度和历史，不会切换 ChatGPT 当前登录账号。
-额度窗口卡片的剩余百分比只在右上角显示一次，底部将重置倒计时和时间压缩为单行。
-
-### 顶栏监控多个账号
-
-可以直接在顶栏的“账号监控”二级菜单底部操作：
-
-- “添加当前账号…”：为当前 `~/.codex/auth.json` 输入一个别名并保存；如果该账号已存在，可直接更新其凭据。
-- “网页登录添加账号…”：打开 Codex 官方浏览器登录，授权成功后自动导入，不覆盖当前账号。
-- “从 auth.json 导入…”：通过 macOS 文件选择框选择其他账号的登录文件。
-- “打开账号存储目录”：在 Finder 中查看本机凭据目录。
-
-账号的详情二级菜单还可以“设为顶栏主账号”和“重命名账号…”。显示名支持中文、英文、数字和空格，顶栏的“顶栏主账号”会显示这个名称。
-
-网页授权使用 [`codex login` 官方流程](https://learn.chatgpt.com/docs/auth)，顶栏不读取你的账号密码。授权会在一次性隔离目录中进行，完成或失败后均会清理；由于浏览器可能已登录 ChatGPT，请在授权页确认选中的账号。
-
-也可以使用命令行。先把当前 ChatGPT/Codex 登录态导入为一个账号：
+程序默认读取 `~/.codex/auth.json`。也可以指定其他登录文件：
 
 ```bash
+python main.py codex --auth-file /path/to/auth.json
+```
+
+输出包括账号实际拥有的额度窗口及重置时间、Codex plan、点数、重置卡数量与到期时间。当接口没有返回主账号的 5 小时窗口时，Web 面板会显示“5 小时·无限额”说明卡片，但不会将其作为采样写入历史。
+
+## 多账号管理
+
+菜单栏“账号监控”中可以：
+
+- 添加当前账号。
+- 通过 Codex CLI 的浏览器登录流程添加账号。
+- 从其他 `auth.json` 导入账号。
+- 设置菜单栏主账号和修改显示名称。
+- 切换 ChatGPT/Codex 当前账号并重新打开客户端。
+
+也可以通过命令行管理：
+
+```bash
+# 导入当前登录账号，并设为菜单栏主账号
 python main.py account import personal --display-name "个人 Pro" --current
-```
 
-切换到另一个 ChatGPT 账号并完成登录后，再导入一次：
+# 导入另一个登录文件
+python main.py account import work --auth-file /path/to/auth.json
 
-```bash
-python main.py account import work
+# 查看、选择和重命名账号
 python main.py account list
+python main.py account use work
 python main.py account rename work "工作账号"
+
+# 更新已存在账号的凭据
+python main.py account import work --auth-file /path/to/auth.json --replace
 ```
 
-如果已经准备了其他 `auth.json`，可以直接指定：
+设置“菜单栏主账号”只改变默认展示，不会切换 ChatGPT 登录。菜单中的“切换到此账号并重启 ChatGPT”才会替换 `~/.codex/auth.json`；切换前会先保存原账号的最新登录态。
+
+## 缓存与历史记录
+
+运行数据默认位于 `~/.hua-quota/`：
+
+```text
+~/.hua-quota/
+├── accounts/                 # 多账号凭据，目录权限 0700、文件权限 0600
+├── state.json                # 主账号与账号索引
+└── usage-history.sqlite3     # 额度采样和短期缓存
+```
+
+- 每个账号、每个额度窗口分别记录，不会互相混合。
+- 每次成功刷新都会留下采样，即使百分比没有变化。
+- 失败刷新不会写入历史，也不会延长缓存有效期。
+- 缓存有效期为 10 分钟，历史默认保留 30 天。
+- SQLite 中不保存 token 或 Cookie。
+
+Web 页面先展示 10 分钟内的 SQLite 快照，然后异步替换为实时结果。额度趋势统一在 Web 面板查看。
+
+## OpenAI Admin API 用量与费用
+
+复制环境变量示例并填写组织 Admin API Key：
 
 ```bash
-python main.py account import backup --auth-file /path/to/auth.json
+cp .env.example .env
 ```
 
-再启动顶栏，“账号监控”二级菜单会按接口返回的窗口时长，动态展示每个账号实际拥有的 5 小时、周或月度额度，以及点数、重置卡和更新时间。当前顶栏主账号每 `--interval` 秒刷新，全部账号最快每 5 分钟刷新，也可以手动选择“刷新所有账号”。每个已管理账号的成功刷新都会以独立账号 ID 写入额度历史数据库，不会与其他账号混合。
-
-在非当前账号的详情菜单中选择“切换到此账号并重启 ChatGPT”，工具会：
-
-1. 请求 ChatGPT 正常退出，不会强制结束进程。
-2. 保存原账号的最新登录态。
-3. 原子替换 `~/.codex/auth.json`，然后重新打开 ChatGPT。
-
-账号凭据默认保存在 `~/.hua-quota/accounts/`，目录权限为 `0700`，凭据文件权限为 `0600`。这些文件包含可用于登录的 token，不要上传、提交到 Git 或发送给他人。长时间没有使用的账号可能会显示登录态失效，需要重新登录后用 `--replace` 导入：
+常用查询：
 
 ```bash
-python main.py account import work --replace
+python main.py api --window 5h
+python main.py api --window week --group-by model
+python main.py api --kind costs --window month
+python main.py api --window 2026-07-01..2026-07-02 --bucket 1h
+python main.py api --window 5h --group-by model --json
 ```
+
+`--window` 支持 `5h`、`today`、`week`、`month`、`30d` 或自定义日期范围。日期不带时区时按本机时区解释。
+
+其他 Usage 类型：
+
+```bash
+python main.py api --kind usage --usage-type images --window week
+python main.py api --kind usage --usage-type web_searches --window today --group-by model
+```
+
+可选类型包括 `completions`、`embeddings`、`moderations`、`images`、`audio_speeches`、`audio_transcriptions`、`vector_stores`、`code_interpreter_sessions`、`file_searches` 和 `web_searches`。
+
+## 高级：探测 ChatGPT 网页接口
+
+如果已经从浏览器导出了 Cookie，可以请求指定的 ChatGPT 网页端接口：
+
+```bash
+python main.py chatgpt \
+  --url "https://chatgpt.com/your-endpoint" \
+  --cookie-file ./cookies.txt
+```
+
+`cookies.txt` 支持完整 Cookie header 或 Netscape cookie 文件格式。程序会输出原始 JSON，并扫描 `quota`、`limit`、`usage`、`remaining`、`reset` 等疑似额度字段。
+
+## 数据与安全
+
+- Web 服务默认只监听本机回环地址 `127.0.0.1`，不要在不可信网络中改为公开监听地址。
+- `auth.json`、`.env`、Cookie 和 `~/.hua-quota/accounts/` 都包含敏感信息，不要提交到 Git、上传日志或发送给他人。
+- 网页授权在一次性隔离目录中执行，成功或失败后都会清理；应用不会读取你的账号密码。
+- 发现安全问题时，请参阅 [SECURITY.md](SECURITY.md)，不要在公开 Issue 中粘贴凭据。
+
+## 开发
+
+```bash
+python -m py_compile main.py src/*.py tests/*.py
+python -m unittest discover -s tests -v
+```
+
+核心模块：
+
+- `src/quota_service.py`：统一账号额度读取、缓存回退和历史写入。
+- `src/usage_monitor.py`：SQLite 采样、缓存和趋势查询。
+- `src/account_store.py`：本地多账号凭据管理。
+- `src/dashboard_server.py`：Web 面板服务。
+- `src/codex_widget.py`：macOS 菜单栏应用。
+
+欢迎提交 Issue 和 Pull Request。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+## License
+
+[MIT](LICENSE) © 2026 田小檬

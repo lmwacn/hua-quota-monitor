@@ -56,7 +56,7 @@ def _get_json(auth: CodexAuth, url: str) -> dict[str, Any]:
     headers = {
         "Authorization": f"Bearer {auth.access_token}",
         "Accept": "application/json",
-        "User-Agent": "gpt-quota-local/0.1",
+        "User-Agent": "hua-quota-monitor/0.1",
     }
     if auth.account_id:
         headers["ChatGPT-Account-Id"] = auth.account_id

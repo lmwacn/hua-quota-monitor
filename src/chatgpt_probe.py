@@ -20,7 +20,7 @@ class ChatGPTProbeConfig:
 def probe_chatgpt_session(config: ChatGPTProbeConfig) -> dict[str, Any]:
     headers = {
         "Accept": "application/json, text/plain, */*",
-        "User-Agent": "gpt-quota-local/0.1",
+        "User-Agent": "hua-quota-monitor/0.1",
     }
     if config.cookie_file:
         cookie = read_cookie_file(config.cookie_file)

@@ -104,7 +104,7 @@ class AdminClient:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": "gpt-quota-local/0.1",
+                "User-Agent": "hua-quota-monitor/0.1",
             },
         )
         try:

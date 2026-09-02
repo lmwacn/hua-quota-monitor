@@ -280,8 +280,8 @@ def cmd_account(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="gpt-quota",
-        description="查询 OpenAI API 用量/费用，并预留 ChatGPT 本地登录态额度探测。",
+        prog="hua-quota-monitor",
+        description="本地监控 Codex 额度，并查询 OpenAI API 用量与费用。",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
