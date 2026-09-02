@@ -43,6 +43,35 @@ def run_dashboard(
     open_browser: bool,
     store_dir: Path = Path("~/.hua-quota").expanduser(),
 ) -> str:
+    server, url = create_dashboard_server(
+        host=host,
+        port=port,
+        auth_file=auth_file,
+        base_url=base_url,
+        store_dir=store_dir,
+    )
+    if open_browser:
+        threading.Timer(0.2, lambda: webbrowser.open(url)).start()
+    try:
+        print(f"Codex 可视化面板已启动：{url}")
+        print("按 Ctrl+C 停止服务。")
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n已停止面板服务。")
+    finally:
+        server.server_close()
+    return url
+
+
+def create_dashboard_server(
+    *,
+    host: str,
+    port: int,
+    auth_file: Path,
+    base_url: str,
+    store_dir: Path,
+) -> tuple[ThreadingHTTPServer, str]:
+    """Create a dashboard server without starting its blocking serve loop."""
     actual_port = find_available_port(host, port)
     web_dir = Path(__file__).resolve().parent.parent / "web"
 
@@ -56,17 +85,7 @@ def run_dashboard(
 
     server = ThreadingHTTPServer((host, actual_port), Handler)
     url = f"http://{host}:{actual_port}"
-    if open_browser:
-        threading.Timer(0.2, lambda: webbrowser.open(url)).start()
-    try:
-        print(f"Codex 可视化面板已启动：{url}")
-        print("按 Ctrl+C 停止服务。")
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n已停止面板服务。")
-    finally:
-        server.server_close()
-    return url
+    return server, url
 
 
 class DashboardHandler(BaseHTTPRequestHandler):

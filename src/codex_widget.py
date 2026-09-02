@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Any
 
 from src.codex_usage import CodexUsageError, get_codex_reset_credits, get_codex_usage
+from src.dashboard_server import DEFAULT_DASHBOARD_PORT, create_dashboard_server
 from src.rate_windows import rate_limit_windows
 from src.usage_monitor import UsageMonitor, primary_window_key
 from src.web_auth import login_with_chatgpt
@@ -42,7 +43,7 @@ def _run_menubar_impl(
     try:
         import AppKit
         import objc
-        from Foundation import NSObject, NSTimer
+        from Foundation import NSURL, NSObject, NSTimer
     except ImportError:
         print("菜单栏模式需要 PyObjC，请使用项目 .venv 启动。")
         return 2
@@ -94,6 +95,7 @@ def _run_menubar_impl(
             self.menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self._action(self.menu, "刷新当前账号", "refreshCurrent:")
             self._action(self.menu, "刷新全部账号", "refreshAll:")
+            self._action(self.menu, "打开额度趋势面板", "openDashboard:")
             self.manage_accounts_menu = AppKit.NSMenu.alloc().init()
             manage_accounts_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 "管理账号", None, ""
@@ -154,6 +156,30 @@ def _run_menubar_impl(
 
         def refreshAll_(self, sender: Any) -> None:
             self._start_refresh(True)
+
+        def openDashboard_(self, sender: Any) -> None:
+            if self.dashboard_server is None:
+                try:
+                    server, url = create_dashboard_server(
+                        host="127.0.0.1",
+                        port=DEFAULT_DASHBOARD_PORT,
+                        auth_file=self.auth_file,
+                        base_url=self.base_url,
+                        store_dir=self.monitor_root,
+                    )
+                except Exception as exc:
+                    self._alert("无法启动趋势面板", str(exc))
+                    return
+                self.dashboard_server = server
+                self.dashboard_url = url
+                Thread(
+                    target=server.serve_forever,
+                    name="codex-dashboard",
+                    daemon=True,
+                ).start()
+            target = NSURL.URLWithString_(self.dashboard_url)
+            if target is None or not AppKit.NSWorkspace.sharedWorkspace().openURL_(target):
+                self._alert("无法打开趋势面板", self.dashboard_url)
 
         @objc.python_method
         def _start_refresh(self, all_accounts: bool) -> None:
@@ -838,6 +864,9 @@ def _run_menubar_impl(
         else Path("~/.hua-quota").expanduser()
     )
     controller.usage_monitor = UsageMonitor(monitor_root / "usage-history.sqlite3")
+    controller.monitor_root = monitor_root
+    controller.dashboard_server = None
+    controller.dashboard_url = None
     controller.interval = max(60, int(interval))
     controller.all_interval = max(300, controller.interval)
     controller.refreshing = False
