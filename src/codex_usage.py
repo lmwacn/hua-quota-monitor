@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import ssl
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -9,7 +11,13 @@ from typing import Any
 
 
 class CodexUsageError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
+
+
+_NETWORK_ATTEMPTS = 3
+_RETRY_DELAYS = (0.4, 0.8)
 
 
 @dataclass
@@ -54,19 +62,7 @@ def _get_json(auth: CodexAuth, url: str) -> dict[str, Any]:
         headers["ChatGPT-Account-Id"] = auth.account_id
 
     request = urllib.request.Request(url, headers=headers, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            text = response.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        if exc.code in (401, 403):
-            raise CodexUsageError(
-                f"HTTP {exc.code}: ChatGPT/Codex 登录态无效或已过期。"
-                "请先在 ChatGPT 客户端重新登录，或使用 --auth-file 指定最新的 auth.json。"
-            ) from exc
-        raise CodexUsageError(f"HTTP {exc.code}: {detail[:1000]}") from exc
-    except urllib.error.URLError as exc:
-        raise CodexUsageError(str(exc)) from exc
+    text = _read_response(request)
 
     try:
         payload = json.loads(text)
@@ -75,3 +71,27 @@ def _get_json(auth: CodexAuth, url: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise CodexUsageError("Codex 响应不是 JSON 对象")
     return payload
+
+
+def _read_response(request: urllib.request.Request) -> str:
+    for attempt in range(_NETWORK_ATTEMPTS):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code in (401, 403):
+                raise CodexUsageError(
+                    f"HTTP {exc.code}: ChatGPT/Codex 登录态无效或已过期。"
+                    "请先在 ChatGPT 客户端重新登录，或使用 --auth-file 指定最新的 auth.json。"
+                ) from exc
+            raise CodexUsageError(f"HTTP {exc.code}: {detail[:1000]}") from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ssl.SSLError) as exc:
+            if attempt + 1 < _NETWORK_ATTEMPTS:
+                time.sleep(_RETRY_DELAYS[attempt])
+                continue
+            raise CodexUsageError(
+                f"网络连接暂时异常，已重试 {_NETWORK_ATTEMPTS} 次。",
+                transient=True,
+            ) from exc
+    raise AssertionError("网络重试流程未正常结束")

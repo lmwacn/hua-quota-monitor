@@ -11,7 +11,7 @@ from threading import Thread
 from time import monotonic
 from typing import Any
 
-from src.codex_usage import get_codex_reset_credits, get_codex_usage
+from src.codex_usage import CodexUsageError, get_codex_reset_credits, get_codex_usage
 from src.rate_windows import rate_limit_windows
 from src.usage_monitor import UsageMonitor, primary_window_key
 from src.web_auth import login_with_chatgpt
@@ -220,6 +220,9 @@ def _run_menubar_impl(
                 usage = get_codex_usage(auth_path=path, base_url=self.base_url)
             except Exception as exc:
                 errors.append(f"额度：{exc}")
+                usage_error_transient = (
+                    isinstance(exc, CodexUsageError) and exc.transient
+                )
                 cached = self.usage_monitor.cached_usage(account_key)
                 if cached is not None:
                     usage, usage_observed_at = cached
@@ -230,6 +233,7 @@ def _run_menubar_impl(
             else:
                 usage_observed_at = self.usage_monitor.record_success(account_key, usage)
                 usage_cached = False
+                usage_error_transient = False
             try:
                 reset = get_codex_reset_credits(auth_path=path, base_url=self.base_url)
             except Exception as exc:
@@ -241,6 +245,7 @@ def _run_menubar_impl(
                 "error": "；".join(errors) if errors else None,
                 "updated": datetime.now(),
                 "usage_cached": usage_cached,
+                "usage_error_transient": usage_error_transient,
                 "usage_observed_at": usage_observed_at,
                 "account_key": account_key,
             }
@@ -493,7 +498,12 @@ def _run_menubar_impl(
                     f"状态：使用 {_format_cache_age(result.get('usage_observed_at'))} 的缓存",
                 )
                 if result.get("error"):
-                    self._info(menu, _short_error(result["error"]))
+                    detail = (
+                        "网络暂时异常，本次额度未更新"
+                        if result.get("usage_error_transient")
+                        else _short_error(result["error"])
+                    )
+                    self._info(menu, detail)
             rate = usage.get("rate_limit") or {}
             self._info(menu, f"计划：{usage.get('plan_type') or usage.get('plan') or '未知'}")
             windows = rate_limit_windows(rate)
