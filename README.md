@@ -16,6 +16,16 @@
 - 支持查询官方 OpenAI Admin Usage/Costs API。
 - 提供 JSON 输出，方便脚本和其他工具集成。
 
+## 界面预览
+
+### macOS 菜单栏与多账号管理
+
+![macOS 菜单栏与多账号管理](docs/images/menubar-accounts.png)
+
+### Web 额度趋势面板
+
+![Web 额度趋势面板](docs/images/web-dashboard.png)
+
 ## 运行要求
 
 - Python 3.10 或更高版本。
