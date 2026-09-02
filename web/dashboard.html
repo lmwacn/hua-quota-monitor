@@ -430,6 +430,20 @@
           });
       }
 
+      function mainRateWindows(rateLimit) {
+        const windows = rateWindows(rateLimit);
+        const hasFiveHourWindow = windows.some(
+          (win) => Number(win.limit_window_seconds) === 5 * 3600
+        );
+        if (!hasFiveHourWindow) {
+          windows.push({ limit_window_seconds: 5 * 3600, unlimited: true });
+          windows.sort(
+            (a, b) => Number(a.limit_window_seconds) - Number(b.limit_window_seconds)
+          );
+        }
+        return windows;
+      }
+
       function barClass(used) {
         if (used >= 85) return "danger";
         if (used >= 65) return "warn";
@@ -437,6 +451,16 @@
       }
 
       function windowBlock(label, win) {
+        if (win?.unlimited) {
+          return `
+            <div class="window">
+              <div class="limit-title">
+                <span>${label}</span>
+                <span class="pill">无限额</span>
+              </div>
+              <div class="hint">该账号无 5 小时额度限制</div>
+            </div>`;
+        }
         const used = pct(win?.used_percent);
         return `
           <div class="window">
@@ -449,8 +473,10 @@
           </div>`;
       }
 
-      function limitSection(title, rateLimit) {
-        const windows = rateWindows(rateLimit);
+      function limitSection(title, rateLimit, includeUnlimitedFiveHour = false) {
+        const windows = includeUnlimitedFiveHour
+          ? mainRateWindows(rateLimit)
+          : rateWindows(rateLimit);
         return `
           <div class="limit-row">
             <div class="limit-title">
@@ -466,7 +492,7 @@
       }
 
       function renderMainSummary(main) {
-        const windows = rateWindows(main);
+        const windows = mainRateWindows(main);
         [0, 1].forEach((index) => {
           const number = index + 1;
           const tile = el(`mainWindow${number}Tile`);
@@ -474,8 +500,12 @@
           tile.style.display = win ? "" : "none";
           if (!win) return;
           el(`mainWindow${number}Label`).textContent = `主额度 · ${windowLabel(win)}`;
-          el(`mainWindow${number}`).textContent = `${pct(win.used_percent)}%`;
-          el(`mainWindow${number}Reset`).textContent = `${fmtDuration(win.reset_after_seconds)} 后重置`;
+          el(`mainWindow${number}`).textContent = win.unlimited
+            ? "无限额"
+            : `${pct(win.used_percent)}%`;
+          el(`mainWindow${number}Reset`).textContent = win.unlimited
+            ? "该账号无 5 小时额度限制"
+            : `${fmtDuration(win.reset_after_seconds)} 后重置`;
         });
       }
 
@@ -491,7 +521,7 @@
         el("creditCount").textContent = String(usage.rate_limit_reset_credits?.available_count ?? credits.length);
         const additional = usage.additional_rate_limits || [];
         el("limits").innerHTML =
-          limitSection("主额度", main) +
+          limitSection("主额度", main, true) +
           additional.map((item) => limitSection(item.limit_name || item.metered_feature || "附加额度", item.rate_limit)).join("");
 
         el("credits").innerHTML = credits.length
