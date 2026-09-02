@@ -3,9 +3,10 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+import sqlite3
 from pathlib import Path
 
-from src.usage_monitor import UsageMonitor, primary_window_key
+from src.usage_monitor import UsageMonitor, primary_window_key, usage_window_keys
 
 
 def usage(used: float, *, reset_at: int = 2_000_000_000) -> dict:
@@ -60,6 +61,26 @@ class UsageMonitorTests(unittest.TestCase):
         account_2 = self.monitor.history("account-2")
         self.assertEqual([row["used_percent"] for row in account_1], [20, 20])
         self.assertEqual([row["used_percent"] for row in account_2], [70])
+
+    def test_current_window_keys_do_not_include_removed_old_windows(self) -> None:
+        weekly = usage(7)
+        weekly["rate_limit"]["primary_window"]["limit_window_seconds"] = 604_800
+        self.assertEqual(usage_window_keys(weekly), {"main:604800"})
+
+    def test_old_position_based_window_keys_are_migrated(self) -> None:
+        path = Path(self.temp_dir.name) / "history.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.execute(
+                """
+                INSERT INTO usage_history(
+                    account_key, observed_at, window_key, label,
+                    duration_seconds, reset_at, used_percent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("account-1", time.time(), "main:1:604800", "周额度", 604800, None, 7),
+            )
+        migrated = UsageMonitor(path).history("account-1")
+        self.assertEqual(migrated[0]["window_key"], "main:604800")
 
 
 if __name__ == "__main__":

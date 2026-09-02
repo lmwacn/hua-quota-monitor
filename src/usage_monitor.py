@@ -192,6 +192,16 @@ class UsageMonitor:
                 ON usage_history(account_key, window_key, observed_at);
                 """
             )
+            rows = connection.execute(
+                "SELECT id, window_key, duration_seconds FROM usage_history"
+            ).fetchall()
+            for row_id, window_key, duration in rows:
+                normalized = _stable_window_key(str(window_key), duration)
+                if normalized != window_key:
+                    connection.execute(
+                        "UPDATE usage_history SET window_key = ? WHERE id = ?",
+                        (normalized, row_id),
+                    )
         try:
             os.chmod(self.path, 0o600)
         except OSError:
@@ -206,6 +216,11 @@ class UsageMonitor:
 def primary_window_key(usage: dict[str, Any]) -> str | None:
     samples = list(_usage_samples(usage))
     return str(samples[0]["window_key"]) if samples else None
+
+
+def usage_window_keys(usage: dict[str, Any]) -> set[str]:
+    """Return only quota windows present in the current API response."""
+    return {str(sample["window_key"]) for sample in _usage_samples(usage)}
 
 
 def _usage_samples(usage: dict[str, Any]):
@@ -226,7 +241,7 @@ def _usage_samples(usage: dict[str, Any]):
             duration = _optional_int(window.get("limit_window_seconds"))
             reset_at = _optional_float(window.get("reset_at"))
             yield {
-                "window_key": f"{section_key}:{position}:{duration or 'unknown'}",
+                "window_key": f"{section_key}:{duration or f'unknown-{position}'}",
                 "label": label if section_title == "主额度" else f"{section_title} · {label}",
                 "duration_seconds": duration,
                 "reset_at": reset_at,
@@ -254,3 +269,13 @@ def _optional_float(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _stable_window_key(window_key: str, duration: Any) -> str:
+    normalized_duration = _optional_int(duration)
+    if normalized_duration is None:
+        return window_key
+    parts = window_key.rsplit(":", 2)
+    if len(parts) == 3 and parts[1] in {"0", "1"} and parts[2] == str(normalized_duration):
+        return f"{parts[0]}:{normalized_duration}"
+    return window_key

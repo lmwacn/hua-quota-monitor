@@ -320,15 +320,15 @@
             <div class="value" id="plan">-</div>
             <div class="hint">ChatGPT 账号对应的 Codex plan</div>
           </div>
-          <div class="tile">
-            <div class="label">主额度 5 小时</div>
-            <div class="value" id="main5h">-</div>
-            <div class="hint" id="main5hReset">-</div>
+          <div class="tile" id="mainWindow1Tile">
+            <div class="label" id="mainWindow1Label">主额度</div>
+            <div class="value" id="mainWindow1">-</div>
+            <div class="hint" id="mainWindow1Reset">-</div>
           </div>
-          <div class="tile">
-            <div class="label">主额度周窗口</div>
-            <div class="value" id="mainWeek">-</div>
-            <div class="hint" id="mainWeekReset">-</div>
+          <div class="tile" id="mainWindow2Tile">
+            <div class="label" id="mainWindow2Label">主额度</div>
+            <div class="value" id="mainWindow2">-</div>
+            <div class="hint" id="mainWindow2Reset">-</div>
           </div>
           <div class="tile">
             <div class="label">重置卡</div>
@@ -406,6 +406,30 @@
         return Number.isFinite(Number(value)) ? Number(value) : 0;
       }
 
+      function windowLabel(win) {
+        const seconds = Number(win?.limit_window_seconds);
+        if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isInteger(seconds)) return "额度";
+        if (seconds === 5 * 3600) return "5 小时";
+        if (seconds === 7 * 86400) return "周额度";
+        if (seconds >= 28 * 86400 && seconds <= 31 * 86400) return "月额度";
+        if (seconds % 86400 === 0) return `${seconds / 86400} 天`;
+        if (seconds % 3600 === 0) return `${seconds / 3600} 小时`;
+        if (seconds % 60 === 0) return `${seconds / 60} 分钟`;
+        return `${seconds} 秒`;
+      }
+
+      function rateWindows(rateLimit) {
+        return [rateLimit?.primary_window, rateLimit?.secondary_window]
+          .filter((win) => win && Object.keys(win).length)
+          .sort((a, b) => {
+            const left = Number(a.limit_window_seconds);
+            const right = Number(b.limit_window_seconds);
+            if (!Number.isFinite(left)) return 1;
+            if (!Number.isFinite(right)) return -1;
+            return left - right;
+          });
+      }
+
       function barClass(used) {
         if (used >= 85) return "danger";
         if (used >= 65) return "warn";
@@ -426,33 +450,44 @@
       }
 
       function limitSection(title, rateLimit) {
+        const windows = rateWindows(rateLimit);
         return `
           <div class="limit-row">
             <div class="limit-title">
-              <span>${title}</span>
+              <span>${escapeHtml(title)}</span>
               <span class="pill">${rateLimit?.limit_reached ? "已触顶" : "可用"}</span>
             </div>
             <div class="window-grid">
-              ${windowBlock("5 小时窗口", rateLimit?.primary_window)}
-              ${windowBlock("周窗口", rateLimit?.secondary_window)}
+              ${windows.length
+                ? windows.map((win) => windowBlock(`${windowLabel(win)}窗口`, win)).join("")
+                : '<div class="hint">暂无额度窗口</div>'}
             </div>
           </div>`;
+      }
+
+      function renderMainSummary(main) {
+        const windows = rateWindows(main);
+        [0, 1].forEach((index) => {
+          const number = index + 1;
+          const tile = el(`mainWindow${number}Tile`);
+          const win = windows[index];
+          tile.style.display = win ? "" : "none";
+          if (!win) return;
+          el(`mainWindow${number}Label`).textContent = `主额度 · ${windowLabel(win)}`;
+          el(`mainWindow${number}`).textContent = `${pct(win.used_percent)}%`;
+          el(`mainWindow${number}Reset`).textContent = `${fmtDuration(win.reset_after_seconds)} 后重置`;
+        });
       }
 
       function render(data) {
         const usage = data.usage || {};
         const resetCredits = data.reset_credits || {};
         const main = usage.rate_limit || {};
-        const main5 = main.primary_window || {};
-        const mainWeek = main.secondary_window || {};
         const credits = resetCredits.credits || [];
 
         el("account").textContent = `${usage.email || "-"} · ${usage.account_id || "-"}`;
         el("plan").textContent = usage.plan_type || "-";
-        el("main5h").textContent = `${pct(main5.used_percent)}%`;
-        el("main5hReset").textContent = `${fmtDuration(main5.reset_after_seconds)} 后重置`;
-        el("mainWeek").textContent = `${pct(mainWeek.used_percent)}%`;
-        el("mainWeekReset").textContent = `${fmtDuration(mainWeek.reset_after_seconds)} 后重置`;
+        renderMainSummary(main);
         el("creditCount").textContent = String(usage.rate_limit_reset_credits?.available_count ?? credits.length);
         const additional = usage.additional_rate_limits || [];
         el("limits").innerHTML =

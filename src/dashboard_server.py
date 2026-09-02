@@ -16,7 +16,7 @@ from src.codex_usage import (
     get_codex_usage,
     load_codex_auth,
 )
-from src.usage_monitor import UsageMonitor
+from src.usage_monitor import UsageMonitor, usage_window_keys
 
 
 DEFAULT_DASHBOARD_PORT = 48763
@@ -155,12 +155,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             reset_credits = {}
             reset_error = str(exc)
 
+        active_window_keys = usage_window_keys(usage)
+        history = [
+            row
+            for row in self.usage_monitor.history(account_key, hours=24)
+            if row["window_key"] in active_window_keys
+        ]
         self._send_json(
             200,
             {
                 "usage": usage,
                 "reset_credits": reset_credits,
-                "history": self.usage_monitor.history(account_key, hours=24),
+                "history": history,
                 "meta": {
                     "cached": cached_response,
                     "observed_at": observed_at,
