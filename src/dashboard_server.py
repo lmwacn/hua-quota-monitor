@@ -5,10 +5,11 @@ import mimetypes
 import socket
 import threading
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from src.codex_usage import (
     CodexUsageError,
@@ -95,9 +96,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
     usage_monitor: UsageMonitor
 
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/api/codex":
-            self._handle_codex()
+            if parse_qs(parsed.query).get("cached") == ["1"]:
+                self._handle_cached_codex()
+            else:
+                self._handle_codex()
             return
         if path == "/":
             self._serve_file(self.web_dir / "dashboard.html")
@@ -126,55 +131,106 @@ class DashboardHandler(BaseHTTPRequestHandler):
         return
 
     def _handle_codex(self) -> None:
+        account_key = self._account_key()
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="dashboard-api") as pool:
+            usage_future = pool.submit(
+                get_codex_usage,
+                auth_path=self.auth_file,
+                base_url=self.base_url,
+            )
+            reset_future = pool.submit(
+                get_codex_reset_credits,
+                auth_path=self.auth_file,
+                base_url=self.base_url,
+            )
+
+            usage_error = None
+            try:
+                usage = usage_future.result()
+            except CodexUsageError as exc:
+                usage_error = str(exc)
+                cached = self.usage_monitor.cached_usage(account_key)
+                if cached is None:
+                    self._send_json(500, {"error": usage_error})
+                    return
+                usage, observed_at = cached
+                cached_response = True
+            else:
+                observed_at = self.usage_monitor.record_success(account_key, usage)
+                cached_response = False
+
+            reset_error = None
+            try:
+                reset_credits = reset_future.result()
+            except CodexUsageError as exc:
+                reset_credits = {}
+                reset_error = str(exc)
+
+        self._send_json(
+            200,
+            self._dashboard_payload(
+                account_key=account_key,
+                usage=usage,
+                reset_credits=reset_credits,
+                meta={
+                    "cached": cached_response,
+                    "observed_at": observed_at,
+                    "usage_error": usage_error,
+                    "reset_error": reset_error,
+                },
+            ),
+        )
+
+    def _handle_cached_codex(self) -> None:
+        account_key = self._account_key()
+        cached = self.usage_monitor.cached_usage(account_key)
+        if cached is None:
+            self._send_json(404, {"error": "暂无 10 分钟内的本地快照"})
+            return
+        usage, observed_at = cached
+        self._send_json(
+            200,
+            self._dashboard_payload(
+                account_key=account_key,
+                usage=usage,
+                reset_credits={},
+                meta={
+                    "cached": True,
+                    "initial_cache": True,
+                    "observed_at": observed_at,
+                    "usage_error": None,
+                    "reset_error": None,
+                },
+            ),
+        )
+
+    def _account_key(self) -> str:
         try:
             auth = load_codex_auth(self.auth_file)
-            account_key = auth.account_id or str(self.auth_file.resolve())
+            return auth.account_id or str(self.auth_file.resolve())
         except CodexUsageError:
-            account_key = str(self.auth_file.resolve())
-        usage_error = None
-        try:
-            usage = get_codex_usage(auth_path=self.auth_file, base_url=self.base_url)
-        except CodexUsageError as exc:
-            usage_error = str(exc)
-            cached = self.usage_monitor.cached_usage(account_key)
-            if cached is None:
-                self._send_json(500, {"error": usage_error})
-                return
-            usage, observed_at = cached
-            cached_response = True
-        else:
-            observed_at = self.usage_monitor.record_success(account_key, usage)
-            cached_response = False
+            return str(self.auth_file.resolve())
 
-        reset_error = None
-        try:
-            reset_credits = get_codex_reset_credits(
-                auth_path=self.auth_file, base_url=self.base_url
-            )
-        except CodexUsageError as exc:
-            reset_credits = {}
-            reset_error = str(exc)
-
+    def _dashboard_payload(
+        self,
+        *,
+        account_key: str,
+        usage: dict[str, Any],
+        reset_credits: dict[str, Any],
+        meta: dict[str, Any],
+    ) -> dict[str, Any]:
         active_window_keys = usage_window_keys(usage)
         history = [
             row
             for row in self.usage_monitor.history(account_key, hours=24)
             if row["window_key"] in active_window_keys
         ]
-        self._send_json(
-            200,
-            {
-                "usage": usage,
-                "reset_credits": reset_credits,
-                "history": history,
-                "meta": {
-                    "cached": cached_response,
-                    "observed_at": observed_at,
-                    "usage_error": usage_error,
-                    "reset_error": reset_error,
-                },
-            },
-        )
+        return {
+            "usage": usage,
+            "reset_credits": reset_credits,
+            "history": history,
+            "meta": meta,
+        }
 
     def _serve_file(self, path: Path) -> None:
         try:

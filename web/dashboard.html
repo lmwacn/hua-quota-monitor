@@ -510,6 +510,8 @@
       }
 
       function render(data) {
+        el("error").style.display = "none";
+        el("error").classList.remove("notice");
         const usage = data.usage || {};
         const resetCredits = data.reset_credits || {};
         const main = usage.rate_limit || {};
@@ -542,7 +544,12 @@
 
         renderHistory(data.history || []);
         const meta = data.meta || {};
-        if (meta.cached) {
+        if (meta.initial_cache) {
+          const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - meta.observed_at) / 60));
+          el("error").classList.add("notice");
+          el("error").textContent = `已先显示${ageMinutes ? `${ageMinutes} 分钟前` : "刚刚"}的本地快照，正在后台更新…`;
+          el("error").style.display = "block";
+        } else if (meta.cached) {
           const ageMinutes = Math.max(0, Math.floor((Date.now() / 1000 - meta.observed_at) / 60));
           el("error").classList.add("notice");
           el("error").textContent = `当前接口读取失败，显示 ${ageMinutes ? `${ageMinutes} 分钟前` : "刚刚"}的缓存数据；缓存超过 10 分钟后将停止显示。`;
@@ -612,6 +619,12 @@
         el("error").classList.remove("notice");
         el("refresh").disabled = true;
         try {
+          try {
+            const cachedResponse = await fetch("/api/codex?cached=1", { cache: "no-store" });
+            if (cachedResponse.ok) render(await cachedResponse.json());
+          } catch (error) {
+            // 本地快照只是首屏加速，失败时继续请求实时数据。
+          }
           const response = await fetch("/api/codex", { cache: "no-store" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "读取失败");
