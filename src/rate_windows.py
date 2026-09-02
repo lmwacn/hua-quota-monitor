@@ -78,6 +78,32 @@ def rate_limit_windows(rate_limit: dict[str, Any] | None) -> list[tuple[str, dic
     return [(label, window) for _, _, label, window in windows]
 
 
+def usage_rate_limit_sections(usage: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize every usage quota section for all presentation layers."""
+    raw_sections: list[tuple[str, str, dict[str, Any]]] = [
+        ("main", "主额度", usage.get("rate_limit") or {})
+    ]
+    for index, item in enumerate(usage.get("additional_rate_limits") or []):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("limit_name") or item.get("metered_feature") or "附加额度")
+        raw_sections.append(
+            (f"additional:{index}:{title}", title, item.get("rate_limit") or {})
+        )
+    return [
+        {
+            "key": key,
+            "title": title,
+            "limit_reached": bool(rate_limit.get("limit_reached")),
+            "windows": [
+                {"label": label, "window": window}
+                for label, window in rate_limit_windows(rate_limit)
+            ],
+        }
+        for key, title, rate_limit in raw_sections
+    ]
+
+
 def _duration_seconds(value: Any) -> int | None:
     """Normalize a finite positive integral duration to seconds."""
 

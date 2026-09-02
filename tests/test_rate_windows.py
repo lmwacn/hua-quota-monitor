@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from src.rate_windows import rate_limit_windows, window_label
+from src.rate_windows import rate_limit_windows, usage_rate_limit_sections, window_label
 
 
 def test_window_label_uses_duration_for_known_windows() -> None:
@@ -57,6 +57,35 @@ def test_rate_limit_windows_skips_empty_and_keeps_unknown_duration_last() -> Non
     assert rate_limit_windows(None) == []
 
 
+def test_usage_sections_share_normalized_labels_with_all_interfaces() -> None:
+    usage = {
+        "rate_limit": {
+            "primary_window": {
+                "limit_window_seconds": 604_800,
+                "used_percent": 7,
+            }
+        },
+        "additional_rate_limits": [
+            {
+                "limit_name": "Spark",
+                "rate_limit": {
+                    "primary_window": {
+                        "limit_window_seconds": 18_000,
+                        "used_percent": 3,
+                    }
+                },
+            }
+        ],
+    }
+    sections = usage_rate_limit_sections(usage)
+    assert [(item["key"], item["title"]) for item in sections] == [
+        ("main", "主额度"),
+        ("additional:0:Spark", "Spark"),
+    ]
+    assert sections[0]["windows"][0]["label"] == "周额度"
+    assert sections[1]["windows"][0]["label"] == "5 小时"
+
+
 class RateWindowUnittestTests(unittest.TestCase):
     """Expose the assertions to the project's unittest discovery command."""
 
@@ -75,3 +104,6 @@ class RateWindowUnittestTests(unittest.TestCase):
 
     def test_empty_and_unknown_windows(self) -> None:
         test_rate_limit_windows_skips_empty_and_keeps_unknown_duration_last()
+
+    def test_usage_sections(self) -> None:
+        test_usage_sections_share_normalized_labels_with_all_interfaces()

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from src.rate_windows import rate_limit_windows
+from src.rate_windows import usage_rate_limit_sections
 
 
 DEFAULT_CACHE_TTL_SECONDS = 10 * 60
@@ -224,16 +224,12 @@ def usage_window_keys(usage: dict[str, Any]) -> set[str]:
 
 
 def _usage_samples(usage: dict[str, Any]):
-    sections: list[tuple[str, str, dict[str, Any]]] = [
-        ("main", "主额度", usage.get("rate_limit") or {})
-    ]
-    for index, item in enumerate(usage.get("additional_rate_limits") or []):
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("limit_name") or item.get("metered_feature") or "附加额度")
-        sections.append((f"additional:{index}:{title}", title, item.get("rate_limit") or {}))
-    for section_key, section_title, rate_limit in sections:
-        for position, (label, window) in enumerate(rate_limit_windows(rate_limit)):
+    for section in usage_rate_limit_sections(usage):
+        section_key = str(section["key"])
+        section_title = str(section["title"])
+        for position, item in enumerate(section["windows"]):
+            label = str(item["label"])
+            window = item["window"]
             try:
                 used = float(window["used_percent"])
             except (KeyError, TypeError, ValueError):

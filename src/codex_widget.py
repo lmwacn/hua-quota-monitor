@@ -11,8 +11,8 @@ from threading import Thread
 from time import monotonic
 from typing import Any
 
-from src.codex_usage import CodexUsageError, get_codex_reset_credits, get_codex_usage
 from src.dashboard_server import DEFAULT_DASHBOARD_PORT, create_dashboard_server
+from src.quota_service import QuotaService
 from src.rate_windows import rate_limit_windows
 from src.usage_monitor import UsageMonitor, primary_window_key
 from src.web_auth import login_with_chatgpt
@@ -199,82 +199,23 @@ def _run_menubar_impl(
 
         @objc.python_method
         def _profiles(self) -> tuple[list[Any], str | None, str | None]:
-            if self.account_store is None:
-                return (
-                    [{"name": "当前账号", "auth_path": self.auth_file}],
-                    "当前账号",
-                    "当前账号",
-                )
             # Codex may rotate tokens in ~/.codex/auth.json at any time. Persist
             # the latest known credential before reading managed profiles so a
             # later account switch cannot restore a stale token.
             try:
-                self.account_store.sync_canonical()
+                return self.quota_service.profiles(sync_canonical=True)
             except Exception as exc:
                 # A temporarily unreadable canonical file should not prevent
                 # monitoring the last valid credentials stored for each account.
                 print(f"当前账号凭据自动同步失败：{exc}")
-            profiles = list(self.account_store.list_accounts())
-            current = self.account_store.get_current()
-            selected = _profile_value(current, "name") if current else None
-            active = self.account_store.detect_active_name()
-            return profiles, selected, active
+                return self.quota_service.profiles(sync_canonical=False)
 
         @objc.python_method
         def _fetch_profile(self, profile: Any, active_name: str | None) -> dict[str, Any]:
-            name = str(_profile_value(profile, "name") or "未命名账号")
-            account_key = _account_monitor_key(profile, name)
-            # ChatGPT refreshes only the canonical auth cache. Read it for the
-            # active account so monitoring does not use a stale imported token.
-            path = (
-                self.auth_file
-                if name == active_name
-                else Path(_profile_value(profile, "auth_path"))
+            return self.quota_service.fetch_profile(
+                profile,
+                active_name=active_name,
             )
-            usage = reset = None
-            errors = []
-            profile_error = _profile_value(profile, "error")
-            if profile_error:
-                return {
-                    "profile": profile,
-                    "usage": None,
-                    "reset": None,
-                    "error": str(profile_error),
-                    "updated": datetime.now(),
-                }
-            try:
-                usage = get_codex_usage(auth_path=path, base_url=self.base_url)
-            except Exception as exc:
-                errors.append(f"额度：{exc}")
-                usage_error_transient = (
-                    isinstance(exc, CodexUsageError) and exc.transient
-                )
-                cached = self.usage_monitor.cached_usage(account_key)
-                if cached is not None:
-                    usage, usage_observed_at = cached
-                    usage_cached = True
-                else:
-                    usage_observed_at = None
-                    usage_cached = False
-            else:
-                usage_observed_at = self.usage_monitor.record_success(account_key, usage)
-                usage_cached = False
-                usage_error_transient = False
-            try:
-                reset = get_codex_reset_credits(auth_path=path, base_url=self.base_url)
-            except Exception as exc:
-                errors.append(f"重置卡：{exc}")
-            return {
-                "profile": profile,
-                "usage": usage,
-                "reset": reset,
-                "error": "；".join(errors) if errors else None,
-                "updated": datetime.now(),
-                "usage_cached": usage_cached,
-                "usage_error_transient": usage_error_transient,
-                "usage_observed_at": usage_observed_at,
-                "account_key": account_key,
-            }
 
         @objc.python_method
         def _fetch(self, all_accounts: bool) -> None:
@@ -864,6 +805,12 @@ def _run_menubar_impl(
         else Path("~/.hua-quota").expanduser()
     )
     controller.usage_monitor = UsageMonitor(monitor_root / "usage-history.sqlite3")
+    controller.quota_service = QuotaService(
+        auth_file=controller.auth_file,
+        base_url=controller.base_url,
+        monitor=controller.usage_monitor,
+        account_store=account_store,
+    )
     controller.monitor_root = monitor_root
     controller.dashboard_server = None
     controller.dashboard_url = None
@@ -990,10 +937,6 @@ def _account_title_suffix(result: dict[str, Any] | None) -> str:
     remaining = max(0, 100 - _to_percent(used_percent))
     cached = " · 缓存" if result.get("usage_cached") else ""
     return f" · {label} 剩余 {remaining}%{cached}"
-
-
-def _account_monitor_key(profile: Any, fallback: str) -> str:
-    return str(_profile_value(profile, "account_id") or fallback)
 
 
 def _usage_observed_datetime(item: dict[str, Any]) -> datetime | None:

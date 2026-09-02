@@ -79,6 +79,18 @@
         cursor: pointer;
       }
 
+      select {
+        height: 38px;
+        min-width: 190px;
+        max-width: 280px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--ink);
+        padding: 0 32px 0 12px;
+        font: inherit;
+      }
+
       button.primary {
         border-color: var(--blue);
         background: var(--blue);
@@ -313,6 +325,7 @@
           <div class="meta" id="account">正在读取本机登录态...</div>
         </div>
         <div class="actions">
+          <select id="accountSelect" aria-label="选择监控账号" hidden></select>
           <button id="refresh" class="primary">刷新</button>
         </div>
       </header>
@@ -384,6 +397,39 @@
     <script>
       const el = (id) => document.getElementById(id);
       const seriesColors = ["#2563eb", "#16825d", "#b7791f", "#c2413b", "#7c3aed"];
+      let loadVersion = 0;
+
+      function codexApiUrl(cached = false, accountName = el("accountSelect").value) {
+        const parameters = new URLSearchParams();
+        if (cached) parameters.set("cached", "1");
+        if (accountName) parameters.set("account", accountName);
+        return `/api/codex?${parameters.toString()}`;
+      }
+
+      async function loadAccounts() {
+        try {
+          const response = await fetch("/api/accounts", { cache: "no-store" });
+          if (!response.ok) return;
+          const data = await response.json();
+          const accounts = data.accounts || [];
+          if (!accounts.length) return;
+          const selector = el("accountSelect");
+          selector.innerHTML = accounts.map((account) => {
+            const state = account.is_active
+              ? " · 当前登录"
+              : account.is_current ? " · 顶栏主账号" : "";
+            return `<option value="${escapeHtml(account.name)}" ${account.available ? "" : "disabled"}>${escapeHtml(account.display_name + state)}</option>`;
+          }).join("");
+          const preferred = accounts.find(
+            (account) => account.name === data.default_account && account.available
+          ) || accounts.find((account) => account.available);
+          if (!preferred) return;
+          selector.value = preferred.name;
+          selector.hidden = false;
+        } catch (error) {
+          // 多账号列表不影响当前登录账号的额度查询。
+        }
+      }
 
       function fmtTime(value) {
         if (!value) return "-";
@@ -426,39 +472,18 @@
         return Number.isFinite(Number(value)) ? Number(value) : 0;
       }
 
-      function windowLabel(win) {
-        const seconds = Number(win?.limit_window_seconds);
-        if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isInteger(seconds)) return "额度";
-        if (seconds === 5 * 3600) return "5 小时";
-        if (seconds === 7 * 86400) return "周额度";
-        if (seconds >= 28 * 86400 && seconds <= 31 * 86400) return "月额度";
-        if (seconds % 86400 === 0) return `${seconds / 86400} 天`;
-        if (seconds % 3600 === 0) return `${seconds / 3600} 小时`;
-        if (seconds % 60 === 0) return `${seconds / 60} 分钟`;
-        return `${seconds} 秒`;
-      }
-
-      function rateWindows(rateLimit) {
-        return [rateLimit?.primary_window, rateLimit?.secondary_window]
-          .filter((win) => win && Object.keys(win).length)
-          .sort((a, b) => {
-            const left = Number(a.limit_window_seconds);
-            const right = Number(b.limit_window_seconds);
-            if (!Number.isFinite(left)) return 1;
-            if (!Number.isFinite(right)) return -1;
-            return left - right;
-          });
-      }
-
-      function mainRateWindows(rateLimit) {
-        const windows = rateWindows(rateLimit);
+      function mainDisplayWindows(section) {
+        const windows = [...(section?.windows || [])];
         const hasFiveHourWindow = windows.some(
-          (win) => Number(win.limit_window_seconds) === 5 * 3600
+          (item) => Number(item.window?.limit_window_seconds) === 5 * 3600
         );
         if (!hasFiveHourWindow) {
-          windows.push({ limit_window_seconds: 5 * 3600, unlimited: true });
+          windows.push({
+            label: "5 小时",
+            window: { limit_window_seconds: 5 * 3600, unlimited: true },
+          });
           windows.sort(
-            (a, b) => Number(a.limit_window_seconds) - Number(b.limit_window_seconds)
+            (a, b) => Number(a.window?.limit_window_seconds) - Number(b.window?.limit_window_seconds)
           );
         }
         return windows;
@@ -494,37 +519,38 @@
           </div>`;
       }
 
-      function limitSection(title, rateLimit, includeUnlimitedFiveHour = false) {
+      function limitSection(section, includeUnlimitedFiveHour = false) {
         const windows = includeUnlimitedFiveHour
-          ? mainRateWindows(rateLimit)
-          : rateWindows(rateLimit);
+          ? mainDisplayWindows(section)
+          : section.windows || [];
         return `
           <div class="limit-row">
             <div class="limit-title">
-              <span>${escapeHtml(title)}</span>
-              <span class="pill">${rateLimit?.limit_reached ? "已触顶" : "可用"}</span>
+              <span>${escapeHtml(section.title)}</span>
+              <span class="pill">${section.limit_reached ? "已触顶" : "可用"}</span>
             </div>
             <div class="window-grid">
               ${windows.length
-                ? windows.map((win) => windowBlock(`${windowLabel(win)}窗口`, win)).join("")
+                ? windows.map((item) => windowBlock(`${item.label}窗口`, item.window)).join("")
                 : '<div class="hint">暂无额度窗口</div>'}
             </div>
           </div>`;
       }
 
-      function renderMainSummary(main) {
-        const windows = mainRateWindows(main);
+      function renderMainSummary(mainSection) {
+        const windows = mainDisplayWindows(mainSection);
         [0, 1].forEach((index) => {
           const number = index + 1;
           const tile = el(`mainWindow${number}Tile`);
-          const win = windows[index];
-          tile.style.display = win ? "" : "none";
-          if (!win) return;
-          el(`mainWindow${number}Label`).textContent = `主额度 · ${windowLabel(win)}`;
-          el(`mainWindow${number}`).textContent = win.unlimited
+          const item = windows[index];
+          const win = item?.window;
+          tile.style.display = item ? "" : "none";
+          if (!item) return;
+          el(`mainWindow${number}Label`).textContent = `主额度 · ${item.label}`;
+          el(`mainWindow${number}`).textContent = win?.unlimited
             ? "无限额"
             : `${pct(win.used_percent)}%`;
-          el(`mainWindow${number}Reset`).textContent = win.unlimited
+          el(`mainWindow${number}Reset`).textContent = win?.unlimited
             ? "该账号无 5 小时额度限制"
             : `${fmtCompactDuration(win.reset_after_seconds)}后重置`;
         });
@@ -535,17 +561,18 @@
         el("error").classList.remove("notice");
         const usage = data.usage || {};
         const resetCredits = data.reset_credits || {};
-        const main = usage.rate_limit || {};
+        const sections = data.quota_sections || [];
+        const mainSection = sections.find((section) => section.key === "main") || {
+          key: "main", title: "主额度", windows: []
+        };
         const credits = resetCredits.credits || [];
 
         el("account").textContent = `${usage.email || "-"} · ${usage.account_id || "-"}`;
         el("plan").textContent = usage.plan_type || "-";
-        renderMainSummary(main);
+        renderMainSummary(mainSection);
         el("creditCount").textContent = String(usage.rate_limit_reset_credits?.available_count ?? credits.length);
-        const additional = usage.additional_rate_limits || [];
         el("limits").innerHTML =
-          limitSection("主额度", main, true) +
-          additional.map((item) => limitSection(item.limit_name || item.metered_feature || "附加额度", item.rate_limit)).join("");
+          sections.map((section) => limitSection(section, section.key === "main")).join("");
 
         el("credits").innerHTML = credits.length
           ? credits
@@ -636,30 +663,42 @@
       }
 
       async function load() {
+        const version = ++loadVersion;
+        const accountName = el("accountSelect").value;
         el("error").style.display = "none";
         el("error").classList.remove("notice");
         el("refresh").disabled = true;
         try {
           try {
-            const cachedResponse = await fetch("/api/codex?cached=1", { cache: "no-store" });
-            if (cachedResponse.ok) render(await cachedResponse.json());
+            const cachedResponse = await fetch(codexApiUrl(true, accountName), { cache: "no-store" });
+            if (cachedResponse.ok) {
+              const cachedData = await cachedResponse.json();
+              if (version === loadVersion) render(cachedData);
+            }
           } catch (error) {
             // 本地快照只是首屏加速，失败时继续请求实时数据。
           }
-          const response = await fetch("/api/codex", { cache: "no-store" });
+          const response = await fetch(codexApiUrl(false, accountName), { cache: "no-store" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "读取失败");
-          render(data);
+          if (version === loadVersion) render(data);
         } catch (error) {
-          el("error").textContent = error.message;
-          el("error").style.display = "block";
+          if (version === loadVersion) {
+            el("error").textContent = error.message;
+            el("error").style.display = "block";
+          }
         } finally {
-          el("refresh").disabled = false;
+          if (version === loadVersion) el("refresh").disabled = false;
         }
       }
 
       el("refresh").addEventListener("click", load);
-      load();
+      el("accountSelect").addEventListener("change", load);
+      async function initialize() {
+        await loadAccounts();
+        await load();
+      }
+      initialize();
       setInterval(load, 60_000);
     </script>
   </body>

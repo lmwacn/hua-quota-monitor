@@ -5,19 +5,15 @@ import mimetypes
 import socket
 import threading
 import webbrowser
-from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from src.codex_usage import (
-    CodexUsageError,
-    get_codex_reset_credits,
-    get_codex_usage,
-    load_codex_auth,
-)
-from src.usage_monitor import UsageMonitor, usage_window_keys
+from src.account_store import AccountStore, AccountStoreError
+from src.quota_service import QuotaService
+from src.rate_windows import usage_rate_limit_sections
+from src.usage_monitor import UsageMonitor
 
 
 DEFAULT_DASHBOARD_PORT = 48763
@@ -80,9 +76,17 @@ def create_dashboard_server(
         pass
 
     Handler.web_dir = web_dir
-    Handler.auth_file = auth_file
-    Handler.base_url = base_url
-    Handler.usage_monitor = UsageMonitor(store_dir / "usage-history.sqlite3")
+    account_store = AccountStore(
+        root=store_dir,
+        canonical_auth_path=auth_file,
+    )
+    monitor = UsageMonitor(store_dir / "usage-history.sqlite3")
+    Handler.quota_service = QuotaService(
+        auth_file=auth_file,
+        base_url=base_url,
+        monitor=monitor,
+        account_store=account_store,
+    )
 
     server = ThreadingHTTPServer((host, actual_port), Handler)
     url = f"http://{host}:{actual_port}"
@@ -91,18 +95,21 @@ def create_dashboard_server(
 
 class DashboardHandler(BaseHTTPRequestHandler):
     web_dir: Path
-    auth_file: Path
-    base_url: str
-    usage_monitor: UsageMonitor
+    quota_service: QuotaService
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        query = parse_qs(parsed.query)
+        if path == "/api/accounts":
+            self._handle_accounts()
+            return
         if path == "/api/codex":
-            if parse_qs(parsed.query).get("cached") == ["1"]:
-                self._handle_cached_codex()
+            account_name = query.get("account", [None])[0]
+            if query.get("cached") == ["1"]:
+                self._handle_cached_codex(account_name)
             else:
-                self._handle_codex()
+                self._handle_codex(account_name)
             return
         if path == "/":
             self._serve_file(self.web_dir / "dashboard.html")
@@ -130,105 +137,93 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _handle_codex(self) -> None:
-        account_key = self._account_key()
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="dashboard-api") as pool:
-            usage_future = pool.submit(
-                get_codex_usage,
-                auth_path=self.auth_file,
-                base_url=self.base_url,
-            )
-            reset_future = pool.submit(
-                get_codex_reset_credits,
-                auth_path=self.auth_file,
-                base_url=self.base_url,
-            )
+    def _handle_accounts(self) -> None:
+        try:
+            profiles, selected, _ = self.quota_service.profiles()
+        except AccountStoreError as exc:
+            self._send_json(500, {"error": str(exc)})
+            return
+        self._send_json(
+            200,
+            {
+                "accounts": [
+                    {
+                        "name": profile.name,
+                        "display_name": profile.display_name,
+                        "email": profile.email,
+                        "is_current": profile.is_current,
+                        "is_active": profile.is_active,
+                        "available": profile.error is None,
+                    }
+                    for profile in profiles
+                ],
+                "default_account": selected,
+            },
+        )
 
-            usage_error = None
-            try:
-                usage = usage_future.result()
-            except CodexUsageError as exc:
-                usage_error = str(exc)
-                cached = self.usage_monitor.cached_usage(account_key)
-                if cached is None:
-                    self._send_json(500, {"error": usage_error})
-                    return
-                usage, observed_at = cached
-                cached_response = True
-            else:
-                observed_at = self.usage_monitor.record_success(account_key, usage)
-                cached_response = False
-
-            reset_error = None
-            try:
-                reset_credits = reset_future.result()
-            except CodexUsageError as exc:
-                reset_credits = {}
-                reset_error = str(exc)
-
+    def _handle_codex(self, account_name: str | None) -> None:
+        profile = self._resolve_profile(account_name)
+        if profile is None:
+            return
+        result = self.quota_service.fetch_profile(profile)
+        if result["usage"] is None:
+            self._send_json(500, {"error": result["error"] or "额度读取失败"})
+            return
         self._send_json(
             200,
             self._dashboard_payload(
-                account_key=account_key,
-                usage=usage,
-                reset_credits=reset_credits,
+                result=result,
                 meta={
-                    "cached": cached_response,
-                    "observed_at": observed_at,
-                    "usage_error": usage_error,
-                    "reset_error": reset_error,
+                    "cached": result["usage_cached"],
+                    "observed_at": result["usage_observed_at"],
+                    "usage_error": result["usage_error"],
+                    "reset_error": result["reset_error"],
+                    "account_name": account_name,
                 },
             ),
         )
 
-    def _handle_cached_codex(self) -> None:
-        account_key = self._account_key()
-        cached = self.usage_monitor.cached_usage(account_key)
-        if cached is None:
+    def _handle_cached_codex(self, account_name: str | None) -> None:
+        profile = self._resolve_profile(account_name)
+        if profile is None:
+            return
+        result = self.quota_service.cached_profile(profile)
+        if result is None:
             self._send_json(404, {"error": "暂无 10 分钟内的本地快照"})
             return
-        usage, observed_at = cached
         self._send_json(
             200,
             self._dashboard_payload(
-                account_key=account_key,
-                usage=usage,
-                reset_credits={},
+                result=result,
                 meta={
                     "cached": True,
                     "initial_cache": True,
-                    "observed_at": observed_at,
+                    "observed_at": result["usage_observed_at"],
                     "usage_error": None,
                     "reset_error": None,
+                    "account_name": account_name,
                 },
             ),
         )
 
-    def _account_key(self) -> str:
+    def _resolve_profile(self, account_name: str | None) -> Any | None:
         try:
-            auth = load_codex_auth(self.auth_file)
-            return auth.account_id or str(self.auth_file.resolve())
-        except CodexUsageError:
-            return str(self.auth_file.resolve())
+            return self.quota_service.resolve_profile(account_name)
+        except (AccountStoreError, ValueError) as exc:
+            self._send_json(404, {"error": str(exc)})
+            return None
 
     def _dashboard_payload(
         self,
         *,
-        account_key: str,
-        usage: dict[str, Any],
-        reset_credits: dict[str, Any],
+        result: dict[str, Any],
         meta: dict[str, Any],
     ) -> dict[str, Any]:
-        active_window_keys = usage_window_keys(usage)
-        history = [
-            row
-            for row in self.usage_monitor.history(account_key, hours=24)
-            if row["window_key"] in active_window_keys
-        ]
         return {
-            "usage": usage,
-            "reset_credits": reset_credits,
-            "history": history,
+            "usage": result["usage"],
+            "quota_sections": usage_rate_limit_sections(result["usage"]),
+            "reset_credits": result["reset"] or {},
+            "history": self.quota_service.current_history(result, hours=24),
             "meta": meta,
         }
 
