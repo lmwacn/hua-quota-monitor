@@ -14,7 +14,7 @@ from typing import Any
 from src.dashboard_server import DEFAULT_DASHBOARD_PORT, create_dashboard_server
 from src.quota_service import QuotaService
 from src.rate_windows import rate_limit_windows
-from src.usage_monitor import UsageMonitor, primary_window_key
+from src.usage_monitor import UsageMonitor
 from src.web_auth import login_with_chatgpt
 
 
@@ -85,44 +85,10 @@ def _run_menubar_impl(
             accounts_root.setSubmenu_(self.accounts_menu)
             self.menu.addItem_(accounts_root)
             self._info(self.accounts_menu, "账号列表：加载中")
-            self.progress_menu = AppKit.NSMenu.alloc().init()
-            progress_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "额度消耗监控", None, ""
-            )
-            progress_root.setSubmenu_(self.progress_menu)
-            self.menu.addItem_(progress_root)
-            self._info(self.progress_menu, "等待首次采样")
             self.menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self._action(self.menu, "刷新当前账号", "refreshCurrent:")
             self._action(self.menu, "刷新全部账号", "refreshAll:")
             self._action(self.menu, "打开额度趋势面板", "openDashboard:")
-            self.manage_accounts_menu = AppKit.NSMenu.alloc().init()
-            manage_accounts_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "管理账号", None, ""
-            )
-            manage_accounts_root.setSubmenu_(self.manage_accounts_menu)
-            self.menu.addItem_(manage_accounts_root)
-            self._action(
-                self.manage_accounts_menu,
-                "添加当前账号…",
-                "addCurrentAccount:",
-            )
-            self._action(
-                self.manage_accounts_menu,
-                "网页登录添加账号…",
-                "webAuthorizeAccount:",
-            )
-            self._action(
-                self.manage_accounts_menu,
-                "从 auth.json 导入…",
-                "importAuthFile:",
-            )
-            self.manage_accounts_menu.addItem_(AppKit.NSMenuItem.separatorItem())
-            self._action(
-                self.manage_accounts_menu,
-                "打开账号存储目录",
-                "openAccountStore:",
-            )
             self._action(self.menu, "退出", "quit:")
             self.status_item.setMenu_(self.menu)
             self.refreshAll_(None)
@@ -285,7 +251,6 @@ def _run_menubar_impl(
             )
             if current is None or current["usage"] is None:
                 self._set_failed_summary()
-                self._build_progress_menu(None)
             else:
                 self._set_summary(selected_display_name or selected, current)
             self._run_pending_refresh()
@@ -337,38 +302,6 @@ def _run_menubar_impl(
             if item.get("usage_cached"):
                 title += "*"
             self.status_item.button().setTitle_(title)
-            self._build_progress_menu(item)
-
-        @objc.python_method
-        def _build_progress_menu(self, item: dict[str, Any] | None) -> None:
-            self.progress_menu.removeAllItems()
-            if item is None or item.get("usage") is None:
-                self._info(self.progress_menu, "暂无可用采样")
-                return
-            window_key = primary_window_key(item["usage"])
-            progress = (
-                self.usage_monitor.progress(item["account_key"], window_key)
-                if window_key else None
-            )
-            if progress is None:
-                self._info(self.progress_menu, "等待首次采样")
-                return
-            self._info(
-                self.progress_menu,
-                f"{progress['label']}：本周期已用 {_format_progress_percent(progress['used_percent'])}",
-            )
-            self._info(
-                self.progress_menu,
-                f"距上次采样：{_format_progress_delta(progress['delta_previous'])}",
-            )
-            self._info(
-                self.progress_menu,
-                f"最近 1 小时：{_format_progress_delta(progress['delta_1h'])}",
-            )
-            observed = datetime.fromtimestamp(progress["observed_at"])
-            self._info(self.progress_menu, f"最后成功采样：{observed.strftime('%-m月%-d日 %H:%M:%S')}")
-            if item.get("usage_cached"):
-                self._info(self.progress_menu, "当前为缓存数据，本次失败未记录")
 
         @objc.python_method
         def _build_credit_menu(self, credits: list[dict[str, Any]]) -> None:
@@ -391,7 +324,6 @@ def _run_menubar_impl(
             self.accounts_menu.removeAllItems()
             if not profiles:
                 self._info(self.accounts_menu, "暂无账号")
-                return
             for profile in profiles:
                 name = str(_profile_value(profile, "name") or "未命名账号")
                 display_name = _profile_display_name(profile)
@@ -422,6 +354,26 @@ def _run_menubar_impl(
                     self._action(submenu, "重命名账号…", "renameAccount:", name)
                 root.setSubmenu_(submenu)
                 self.accounts_menu.addItem_(root)
+
+            if self.account_store is not None:
+                self.accounts_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+                self._action(self.accounts_menu, "添加当前账号…", "addCurrentAccount:")
+                self._action(
+                    self.accounts_menu,
+                    "网页登录添加账号…",
+                    "webAuthorizeAccount:",
+                )
+                self._action(
+                    self.accounts_menu,
+                    "从 auth.json 导入…",
+                    "importAuthFile:",
+                )
+                self.accounts_menu.addItem_(AppKit.NSMenuItem.separatorItem())
+                self._action(
+                    self.accounts_menu,
+                    "打开账号存储目录",
+                    "openAccountStore:",
+                )
 
         def setMainAccount_(self, sender: Any) -> None:
             name = str(sender.representedObject())
@@ -955,22 +907,6 @@ def _format_cache_age(observed_at: Any) -> str:
     if seconds < 60:
         return "刚刚"
     return f"{seconds // 60} 分钟前"
-
-
-def _format_progress_percent(value: Any) -> str:
-    try:
-        return f"{float(value):.1f}%"
-    except (TypeError, ValueError):
-        return "暂无"
-
-
-def _format_progress_delta(value: Any) -> str:
-    if value is None:
-        return "等待更多采样"
-    try:
-        return f"+{float(value):.1f} 个百分点"
-    except (TypeError, ValueError):
-        return "暂无"
 
 
 def _short_error(error: str, limit: int = 90) -> str:
