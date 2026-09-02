@@ -248,7 +248,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        self.wfile.write(content)
+        self._write_content(content)
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
         content = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -257,4 +257,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(content)))
         self.end_headers()
-        self.wfile.write(content)
+        self._write_content(content)
+
+    def _write_content(self, content: bytes) -> None:
+        try:
+            self.wfile.write(content)
+        except (BrokenPipeError, ConnectionResetError):
+            # Switching accounts can cancel an older in-flight browser request.
+            return
