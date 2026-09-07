@@ -332,9 +332,6 @@ def _run_menubar_impl(
                     + display_name + _account_title_suffix(result), None, ""
                 )
                 submenu = AppKit.NSMenu.alloc().init()
-                email = _profile_value(profile, "email")
-                if email:
-                    self._info(submenu, f"邮箱：{email}")
                 self._account_details(submenu, result)
                 submenu.addItem_(AppKit.NSMenuItem.separatorItem())
                 if name == self.selected_name:
