@@ -9,6 +9,7 @@ from src.codex_widget import (
     _format_account_summary,
     _format_credit_menu_title,
     _format_limit_item,
+    _format_plan_name,
     _is_valid_display_name,
     _is_valid_account_name,
     _profile_display_name,
@@ -58,6 +59,25 @@ class CodexWidgetFormattingTests(unittest.TestCase):
         self.assertEqual(
             _account_title_suffix(snapshot(2_592_000)), " · 月额度 剩余 47%"
         )
+
+    def test_account_title_includes_subscription_level(self) -> None:
+        snapshot = {
+            "usage": {
+                "plan_type": "pro",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 30,
+                        "limit_window_seconds": 604_800,
+                    }
+                },
+            }
+        }
+        self.assertEqual(
+            _account_title_suffix(snapshot), " · Pro · 周额度 剩余 70%"
+        )
+        self.assertEqual(_format_plan_name("plus"), "Plus")
+        self.assertEqual(_format_plan_name("Custom Plan"), "Custom Plan")
+        self.assertEqual(_format_plan_name(None), "")
 
     def test_account_alias_suggestion_is_safe_and_unique(self) -> None:
         self.assertTrue(_is_valid_account_name("work-2"))

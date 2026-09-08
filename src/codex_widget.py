@@ -420,7 +420,8 @@ def _run_menubar_impl(
                     )
                     self._info(menu, detail)
             rate = usage.get("rate_limit") or {}
-            self._info(menu, f"计划：{usage.get('plan_type') or usage.get('plan') or '未知'}")
+            plan = _format_plan_name(usage.get("plan_type") or usage.get("plan"))
+            self._info(menu, f"计划：{plan or '未知'}")
             windows = rate_limit_windows(rate)
             if windows:
                 for label, window in windows:
@@ -875,16 +876,36 @@ def _account_title_suffix(result: dict[str, Any] | None) -> str:
     usage = result.get("usage")
     if usage is None:
         return " · 查询失败"
+    plan = _format_plan_name(usage.get("plan_type") or usage.get("plan"))
+    plan_suffix = f" · {plan}" if plan else ""
     windows = rate_limit_windows(usage.get("rate_limit") or {})
     if not windows:
-        return " · 额度暂无"
+        return f"{plan_suffix} · 额度暂无"
     label, primary = windows[0]
     used_percent = primary.get("used_percent")
     if used_percent is None:
-        return f" · {label} 暂无"
+        return f"{plan_suffix} · {label} 暂无"
     remaining = max(0, 100 - _to_percent(used_percent))
     cached = " · 缓存" if result.get("usage_cached") else ""
-    return f" · {label} 剩余 {remaining}%{cached}"
+    return f"{plan_suffix} · {label} 剩余 {remaining}%{cached}"
+
+
+def _format_plan_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    name = value.strip()
+    if not name:
+        return ""
+    display_names = {
+        "free": "Free",
+        "plus": "Plus",
+        "pro": "Pro",
+        "team": "Team",
+        "business": "Business",
+        "enterprise": "Enterprise",
+        "edu": "Edu",
+    }
+    return display_names.get(name.casefold(), name)
 
 
 def _usage_observed_datetime(item: dict[str, Any]) -> datetime | None:
