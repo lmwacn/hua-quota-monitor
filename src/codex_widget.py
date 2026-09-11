@@ -426,6 +426,7 @@ def _run_menubar_impl(
             if windows:
                 for label, window in windows:
                     self._info(menu, _format_limit_item(label, window))
+                self._info(menu, _format_reset_item(windows[0][1]))
             else:
                 self._info(menu, "额度：暂无")
             balance = (usage.get("credits") or {}).get("balance")

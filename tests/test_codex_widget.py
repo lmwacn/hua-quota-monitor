@@ -10,6 +10,7 @@ from src.codex_widget import (
     _format_credit_menu_title,
     _format_limit_item,
     _format_plan_name,
+    _format_reset_item,
     _is_valid_display_name,
     _is_valid_account_name,
     _profile_display_name,
@@ -78,6 +79,13 @@ class CodexWidgetFormattingTests(unittest.TestCase):
         self.assertEqual(_format_plan_name("plus"), "Plus")
         self.assertEqual(_format_plan_name("Custom Plan"), "Custom Plan")
         self.assertEqual(_format_plan_name(None), "")
+
+    def test_account_reset_item_includes_local_date_and_time(self) -> None:
+        reset_at = datetime(2026, 9, 16, 19).timestamp()
+        self.assertEqual(
+            _format_reset_item({"reset_at": reset_at}),
+            "重置时间：9月16日 19:00 重置",
+        )
 
     def test_account_alias_suggestion_is_safe_and_unique(self) -> None:
         self.assertTrue(_is_valid_account_name("work-2"))
