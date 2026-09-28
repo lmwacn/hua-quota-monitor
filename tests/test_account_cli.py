@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import argparse
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from main import cmd_menubar
+from src.account_store import AccountStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -146,6 +151,22 @@ class AccountCliTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 1)
         self.assertIn("账号操作失败：账号不存在", missing.stderr)
         self.assertFalse(self.canonical.exists())
+
+    def test_menubar_does_not_restore_deleted_last_account(self) -> None:
+        self.canonical.parent.mkdir(parents=True)
+        self.canonical.write_bytes(self.personal.read_bytes())
+        args = argparse.Namespace(
+            install_shortcut=False, account_store=str(self.store),
+            auth_file=str(self.canonical), base_url="https://chatgpt.com",
+            interval=60, width=320, height=250, alpha=0.94,
+        )
+        with patch("main.run_menubar", return_value=0):
+            self.assertEqual(cmd_menubar(args), 0)
+            account_store = AccountStore(self.store, self.canonical)
+            self.assertEqual([profile.name for profile in account_store.list_accounts()], ["current"])
+            account_store.delete_account("current")
+            self.assertEqual(cmd_menubar(args), 0)
+        self.assertEqual(account_store.list_accounts(), [])
 
 
 if __name__ == "__main__":

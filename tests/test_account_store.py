@@ -132,6 +132,46 @@ class AccountStoreTests(unittest.TestCase):
             {"display_name": "工作号"},
         )
 
+    def test_delete_account_reselects_main_and_keeps_active_login(self) -> None:
+        personal = self._source("personal.json", _auth("acct-a", "a@example.com", "secret-a"))
+        work = self._source("work.json", _auth("acct-b", "b@example.com", "secret-b"))
+        self.store.import_account("personal", personal, make_current=True)
+        self.store.import_account("work", work)
+        self.canonical.parent.mkdir(parents=True)
+        self.canonical.write_bytes(personal.read_bytes())
+
+        self.store.delete_account("personal")
+
+        self.assertEqual([profile.name for profile in self.store.list_accounts()], ["work"])
+        self.assertEqual(self.store.get_current().name, "work")
+        self.assertEqual(self.canonical.read_bytes(), personal.read_bytes())
+        self.assertFalse((self.store.accounts_dir / "personal").exists())
+        self.assertEqual(
+            json.loads(self.store.state_path.read_text())["profiles"],
+            {"work": {"display_name": "work"}},
+        )
+
+    def test_delete_last_account_stays_empty_and_missing_name_fails(self) -> None:
+        source = self._source("personal.json", _auth("acct-a", "a@example.com", "secret-a"))
+        self.store.import_account("personal", source, make_current=True)
+
+        self.store.delete_account("personal")
+
+        self.assertEqual(self.store.list_accounts(), [])
+        self.assertIsNone(self.store.get_current())
+        self.assertEqual(json.loads(self.store.state_path.read_text())["profiles"], {})
+        with self.assertRaises(AccountNotFoundError):
+            self.store.delete_account("personal")
+
+    def test_delete_rejects_directory_with_unrelated_file(self) -> None:
+        source = self._source("personal.json", _auth("acct-a", "a@example.com", "secret-a"))
+        profile = self.store.import_account("personal", source)
+        (profile.auth_path.parent / "notes.txt").write_text("keep")
+
+        with self.assertRaisesRegex(AccountStoreError, "其他文件"):
+            self.store.delete_account("personal")
+        self.assertTrue(profile.auth_path.is_file())
+
     def test_display_name_validation_and_missing_profile(self) -> None:
         source = self._source("personal.json", _auth("acct-a", "a@example.com", "secret-a"))
         self.store.import_account("personal", source)

@@ -179,7 +179,11 @@ def cmd_menubar(args: argparse.Namespace) -> int:
         root=Path(args.account_store).expanduser(),
         canonical_auth_path=Path(args.auth_file).expanduser(),
     )
-    if not store.list_accounts() and Path(args.auth_file).expanduser().is_file():
+    if (
+        not store.state_path.exists()
+        and not store.list_accounts()
+        and Path(args.auth_file).expanduser().is_file()
+    ):
         try:
             store.import_account(
                 "current",

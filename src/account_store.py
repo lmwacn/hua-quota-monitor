@@ -199,6 +199,28 @@ class AccountStore:
             self._set_display_name_unlocked(name, normalized)
             return self._profile_unlocked(name)
 
+    def delete_account(self, name: str) -> None:
+        """Remove a monitored profile without changing the active Codex login."""
+
+        self.validate_name(name)
+        with self._locked():
+            auth_path = self._auth_path(name)
+            if not auth_path.is_file():
+                raise AccountNotFoundError(f"账号不存在：{name}")
+            account_dir = auth_path.parent
+            if set(account_dir.iterdir()) != {auth_path}:
+                raise AccountStoreError(f"账号目录包含其他文件，无法安全删除：{account_dir}")
+            state = self._read_state_unlocked()
+            try:
+                auth_path.unlink()
+                account_dir.rmdir()
+            except OSError as exc:
+                raise AccountStoreError(f"无法删除账号凭据：{name}") from exc
+            state["profiles"].pop(name, None)
+            if state["current"] == name:
+                state["current"] = next(iter(self._account_names_unlocked()), None)
+            self._write_state_unlocked(state)
+
     def detect_active_name(self) -> str | None:
         """Return the profile whose account_id matches the canonical auth file."""
 

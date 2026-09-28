@@ -348,6 +348,7 @@ def _run_menubar_impl(
                     )
                 if self.account_store is not None:
                     self._action(submenu, "重命名账号…", "renameAccount:", name)
+                    self._action(submenu, "删除账号…", "deleteAccount:", name)
                 root.setSubmenu_(submenu)
                 self.accounts_menu.addItem_(root)
 
@@ -395,6 +396,32 @@ def _run_menubar_impl(
             except Exception as exc:
                 self._alert("重命名失败", str(exc))
                 return
+            self.refreshAll_(None)
+
+        def deleteAccount_(self, sender: Any) -> None:
+            name = str(sender.representedObject())
+            try:
+                profile = self.account_store.get_account(name)
+            except Exception as exc:
+                self._alert("无法读取账号", str(exc))
+                return
+            display_name = _profile_display_name(profile)
+            alert = AppKit.NSAlert.alloc().init()
+            alert.setMessageText_(f"删除监控账号“{display_name}”？")
+            alert.setInformativeText_(
+                "将删除此工具保存的本地账号凭据和显示名称；额度历史记录会保留。"
+                "不会退出或切换 Codex 当前登录。"
+            )
+            alert.addButtonWithTitle_("删除账号")
+            alert.addButtonWithTitle_("取消")
+            if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+                return
+            try:
+                self.account_store.delete_account(name)
+            except Exception as exc:
+                self._alert("删除账号失败", str(exc))
+                return
+            self.results.pop(name, None)
             self.refreshAll_(None)
 
         @objc.python_method
