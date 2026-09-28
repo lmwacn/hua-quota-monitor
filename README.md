@@ -86,6 +86,7 @@ python main.py codex --auth-file /path/to/auth.json
 - 通过 Codex CLI 的浏览器登录流程添加账号。
 - 从其他 `auth.json` 导入账号。
 - 设置菜单栏主账号和修改显示名称。
+- 在每个账号的子菜单查看重置卡到期时间。
 - 删除监控账号（删除本地保存的凭据和显示名称，保留历史记录；不改变 Codex 当前登录）。
 - 切换 ChatGPT/Codex 当前账号并重新打开客户端。
 

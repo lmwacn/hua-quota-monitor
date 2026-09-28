@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.codex_widget import (
     _account_title_suffix,
+    _credit_expiry_items,
     _format_account_summary,
     _format_credit_menu_title,
     _format_limit_item,
@@ -132,6 +133,19 @@ class CodexWidgetFormattingTests(unittest.TestCase):
             _format_credit_menu_title(None, [], False),
             "重置卡到期时间（暂时无法获取）",
         )
+
+    def test_credit_expiry_items_are_sorted_and_handle_missing_data(self) -> None:
+        credits = [
+            {"title": "Later", "expires_at": "2026-10-05T10:00:00Z"},
+            {"title": "Sooner", "expires_at": "2026-10-04T10:00:00Z"},
+            {"title": "Unknown"},
+        ]
+        items = _credit_expiry_items(credits, True)
+        self.assertEqual(len(items), 2)
+        self.assertTrue(items[0].startswith("1. Sooner · "))
+        self.assertTrue(items[1].startswith("2. Later · "))
+        self.assertEqual(_credit_expiry_items([], True), ["暂无可用重置卡"])
+        self.assertEqual(_credit_expiry_items([], False), ["暂时无法获取到期时间"])
 
 
 if __name__ == "__main__":

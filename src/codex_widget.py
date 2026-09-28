@@ -293,7 +293,7 @@ def _run_menubar_impl(
             self.credit_root.setTitle_(
                 _format_credit_menu_title(count, credits, reset is not None)
             )
-            self._build_credit_menu(credits)
+            self._build_credit_menu(self.credit_menu, credits, reset is not None)
             used_percent = primary.get("used_percent")
             title = "—" if used_percent is None else f"{max(0, 100 - _to_percent(used_percent))}%"
             if positive:
@@ -303,20 +303,12 @@ def _run_menubar_impl(
             self.status_item.button().setTitle_(title)
 
         @objc.python_method
-        def _build_credit_menu(self, credits: list[dict[str, Any]]) -> None:
-            self.credit_menu.removeAllItems()
-            visible = sorted(
-                (c for c in credits if c.get("expires_at")),
-                key=lambda c: str(c.get("expires_at")),
-            )
-            if not visible:
-                self._info(self.credit_menu, "暂无可用重置卡")
-            for index, credit in enumerate(visible, 1):
-                self._info(
-                    self.credit_menu,
-                    f"{index}. {credit.get('title') or 'Full reset'} · "
-                    f"{_format_credit_expiry(str(credit['expires_at']))}",
-                )
+        def _build_credit_menu(
+            self, menu: Any, credits: list[dict[str, Any]], reset_loaded: bool
+        ) -> None:
+            menu.removeAllItems()
+            for title in _credit_expiry_items(credits, reset_loaded):
+                self._info(menu, title)
 
         @objc.python_method
         def _build_accounts_menu(self, profiles: list[Any]) -> None:
@@ -462,7 +454,13 @@ def _run_menubar_impl(
             reset = result["reset"]
             credits = reset.get("credits") or [] if reset else []
             count = (usage.get("rate_limit_reset_credits") or {}).get("available_count")
-            self._info(menu, f"重置卡：{count if count is not None else len(credits)} 张")
+            credit_menu = AppKit.NSMenu.alloc().init()
+            credit_root = AppKit.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+                _format_credit_menu_title(count, credits, reset is not None), None, ""
+            )
+            credit_root.setSubmenu_(credit_menu)
+            menu.addItem_(credit_root)
+            self._build_credit_menu(credit_menu, credits, reset is not None)
             self._info(menu, f"更新：{result['updated'].strftime('%H:%M:%S')}")
 
         def switchAccount_(self, sender: Any) -> None:
@@ -859,6 +857,20 @@ def _format_credit_menu_title(
     else:
         return "重置卡到期时间（暂时无法获取）"
     return f"重置卡到期时间（{value} 张）"
+
+
+def _credit_expiry_items(credits: list[dict[str, Any]], reset_loaded: bool) -> list[str]:
+    visible = sorted(
+        (credit for credit in credits if credit.get("expires_at")),
+        key=lambda credit: str(credit["expires_at"]),
+    )
+    if not visible:
+        return ["暂无可用重置卡" if reset_loaded else "暂时无法获取到期时间"]
+    return [
+        f"{index}. {credit.get('title') or 'Full reset'} · "
+        f"{_format_credit_expiry(str(credit['expires_at']))}"
+        for index, credit in enumerate(visible, 1)
+    ]
 
 
 def _is_valid_display_name(name: str) -> bool:
