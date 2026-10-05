@@ -30,7 +30,7 @@ class WindowsInteractionTests(unittest.TestCase):
                 def interact():
                     root.update()
                     label = next(w for w in root.winfo_children() if isinstance(w, tk.Label))
-                    button = next(w for w in root.winfo_children() if isinstance(w, tk.Button))
+                    self.assertFalse(any(isinstance(w, tk.Button) for w in root.winfo_children()))
                     self.assertAlmostEqual(root.attributes('-alpha'), 0.88, places=2)
                     self.assertEqual((root.winfo_x(), root.winfo_y()), (120, 300) if phase == 0 else (160, 330), f"phase={phase}, settings={settings.read_text()}")
                     # Assert Windows has a nonrectangular region for the rounded corners.
@@ -56,9 +56,9 @@ class WindowsInteractionTests(unittest.TestCase):
                             label.event_generate('<Button-3>', x=15, y=15, rootx=135, rooty=315)
                             root.update()
                             self.assertEqual(popup.call_count, 2)
-                            self.assertEqual(button.cget('text'), '移动')
-                            button.invoke()
-                            self.assertEqual(button.cget('text'), '固定')
+                            rows = popup.call_args.args[1]
+                            next(row for row in rows if row.title == '移动悬浮条').action()
+                            self.assertEqual(label.cget('cursor'), 'fleur')
                             label.event_generate('<Button-1>', x=15, y=15, rootx=135, rooty=315)
                             label.event_generate('<Motion>', x=55, y=45, rootx=175, rooty=345, state=256)
                             root.update()
@@ -70,9 +70,10 @@ class WindowsInteractionTests(unittest.TestCase):
                         self.assertFalse(data['locked'])
                     else:
                         self.assertEqual(label.cget('cursor'), 'fleur')
-                        self.assertEqual(button.cget('text'), '固定')
-                        button.invoke()
-                        self.assertEqual(button.cget('text'), '移动')
+                        with patch('src.windows_popup.popup_menu') as popup:
+                            label.event_generate('<Button-3>', x=15, y=15)
+                            rows = popup.call_args.args[1]
+                            next(row for row in rows if row.title == '固定当前位置').action()
                         self.assertEqual(label.cget('cursor'), 'arrow')
                         label.event_generate('<Button-1>', x=15, y=15, rootx=175, rooty=345)
                         label.event_generate('<Motion>', x=55, y=45, rootx=215, rooty=375, state=256)

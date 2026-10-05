@@ -62,11 +62,6 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     label = tk.Label(root, text="Codex · 正在读取额度…", bg="#222b38", fg="#eef2f7",
                      font=("Microsoft YaHei UI", 10), padx=12, pady=4, cursor="arrow")
     label.pack(side="left")
-    move_button = tk.Button(root, text="移动", font=("Microsoft YaHei UI", 9),
-                            bg="#303d50", fg="#edf3fa", activebackground="#42536c",
-                            activeforeground="white", relief="flat", borderwidth=0,
-                            padx=8, pady=4, cursor="hand2", takefocus=False)
-    move_button.pack(side="right", padx=(0, 4), pady=3)
     events = queue.Queue()
     settings = store_dir / "windows-widget.json"
     try:
@@ -77,7 +72,6 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         position = {}
     locked = position.get("locked", True) is not False
     label.config(cursor="arrow" if locked else "fleur")
-    move_button.config(text="移动" if locked else "固定")
     from src.windows_appearance import round_window
     rounded_size = None
     def update_shape():
@@ -129,7 +123,6 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         locked = not locked
         drag = None
         label.config(cursor="arrow" if locked else "fleur")
-        move_button.config(text="移动" if locked else "固定")
         save_position()
         icon.update_menu()
 
@@ -227,7 +220,6 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
                "lock": toggle_lock, "add": lambda: import_account(True),
                "import": import_account,
                "error": lambda: messagebox.showinfo("刷新详情", last_error, parent=root)}
-    move_button.config(command=toggle_lock)
 
     def entries():
         rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
