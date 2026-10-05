@@ -30,8 +30,8 @@ class WindowsInteractionTests(unittest.TestCase):
                 def interact():
                     root.update()
                     label = next(w for w in root.winfo_children() if isinstance(w, tk.Label))
-                    menu = next(w for w in root.winfo_children() if isinstance(w, tk.Menu))
-                    self.assertAlmostEqual(root.attributes('-alpha'), 0.82, places=2)
+                    button = next(w for w in root.winfo_children() if isinstance(w, tk.Button))
+                    self.assertAlmostEqual(root.attributes('-alpha'), 0.88, places=2)
                     self.assertEqual((root.winfo_x(), root.winfo_y()), (120, 300) if phase == 0 else (160, 330), f"phase={phase}, settings={settings.read_text()}")
                     # Assert Windows has a nonrectangular region for the rounded corners.
                     import ctypes
@@ -48,7 +48,7 @@ class WindowsInteractionTests(unittest.TestCase):
                     finally:
                         g.DeleteObject(region)
                     if phase == 0:
-                        with patch.object(tk.Menu, 'tk_popup') as popup:
+                        with patch('src.windows_popup.popup_menu') as popup:
                             label.event_generate('<Button-1>', x=15, y=15, rootx=135, rooty=315)
                             label.event_generate('<ButtonRelease-1>', x=15, y=15, rootx=135, rooty=315)
                             root.update()
@@ -56,9 +56,9 @@ class WindowsInteractionTests(unittest.TestCase):
                             label.event_generate('<Button-3>', x=15, y=15, rootx=135, rooty=315)
                             root.update()
                             self.assertEqual(popup.call_count, 2)
-                            lock_index = next(i for i in range(menu.index('end')+1)
-                                if menu.type(i) != 'separator' and menu.entrycget(i, 'label') == '锁定位置')
-                            menu.invoke(lock_index)
+                            self.assertEqual(button.cget('text'), '移动')
+                            button.invoke()
+                            self.assertEqual(button.cget('text'), '固定')
                             label.event_generate('<Button-1>', x=15, y=15, rootx=135, rooty=315)
                             label.event_generate('<Motion>', x=55, y=45, rootx=175, rooty=345, state=256)
                             root.update()
@@ -70,17 +70,15 @@ class WindowsInteractionTests(unittest.TestCase):
                         self.assertFalse(data['locked'])
                     else:
                         self.assertEqual(label.cget('cursor'), 'fleur')
-                        with patch.object(tk.Menu, 'tk_popup'):
-                            label.event_generate('<Button-3>', x=15, y=15)
-                        lock_index = next(i for i in range(menu.index('end')+1)
-                            if menu.type(i) != 'separator' and menu.entrycget(i, 'label') == '锁定位置')
-                        menu.invoke(lock_index)
+                        self.assertEqual(button.cget('text'), '固定')
+                        button.invoke()
+                        self.assertEqual(button.cget('text'), '移动')
                         self.assertEqual(label.cget('cursor'), 'arrow')
                         label.event_generate('<Button-1>', x=15, y=15, rootx=175, rooty=345)
                         label.event_generate('<Motion>', x=55, y=45, rootx=215, rooty=375, state=256)
                         root.update()
                         self.assertEqual((root.winfo_x(), root.winfo_y()), (160, 330))
-                    menu.invoke(menu.index('end'))
+                    root.tk.call(root.protocol('WM_DELETE_WINDOW'))
                 import pystray
                 real_icon = pystray.Icon
                 def fake_icon(*args):

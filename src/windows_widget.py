@@ -57,11 +57,16 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     root.title("Codex 额度")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.82)
-    root.configure(bg="#243044")
-    label = tk.Label(root, text="Codex · 正在读取额度…", bg="#243044", fg="#dcece7",
-                     font=("Microsoft YaHei UI", 10), padx=16, pady=6, cursor="arrow")
-    label.pack()
+    root.attributes("-alpha", 0.88)
+    root.configure(bg="#222b38")
+    label = tk.Label(root, text="Codex · 正在读取额度…", bg="#222b38", fg="#eef2f7",
+                     font=("Microsoft YaHei UI", 10), padx=12, pady=4, cursor="arrow")
+    label.pack(side="left")
+    move_button = tk.Button(root, text="移动", font=("Microsoft YaHei UI", 9),
+                            bg="#303d50", fg="#edf3fa", activebackground="#42536c",
+                            activeforeground="white", relief="flat", borderwidth=0,
+                            padx=8, pady=4, cursor="hand2", takefocus=False)
+    move_button.pack(side="right", padx=(0, 4), pady=3)
     events = queue.Queue()
     settings = store_dir / "windows-widget.json"
     try:
@@ -72,6 +77,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         position = {}
     locked = position.get("locked", True) is not False
     label.config(cursor="arrow" if locked else "fleur")
+    move_button.config(text="移动" if locked else "固定")
     from src.windows_appearance import round_window
     rounded_size = None
     def update_shape():
@@ -79,7 +85,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         size = (root.winfo_width(), root.winfo_height())
         if size != rounded_size:
             rounded_size = size
-            round_window(root)
+            round_window(root, radius=6)
     root.bind("<Configure>", lambda event: root.after_idle(update_shape) if event.widget is root else None)
     busy = False
     closed = False
@@ -123,7 +129,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         locked = not locked
         drag = None
         label.config(cursor="arrow" if locked else "fleur")
-        lock_state.set(locked)
+        move_button.config(text="移动" if locked else "固定")
         save_position()
         icon.update_menu()
 
@@ -221,45 +227,19 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
                "lock": toggle_lock, "add": lambda: import_account(True),
                "import": import_account,
                "error": lambda: messagebox.showinfo("刷新详情", last_error, parent=root)}
-    lock_state = tk.BooleanVar(root, value=locked)
-    menu = tk.Menu(root, tearoff=False, font=("Microsoft YaHei UI", 10))
+    move_button.config(command=toggle_lock)
 
     def entries():
         rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
-        rows += [Entry(), Entry("锁定位置", toggle_lock, checked=locked),
+        rows += [Entry(), Entry("移动悬浮条" if locked else "固定当前位置", toggle_lock),
                  Entry("移到任务栏左侧", actions["left"]), Entry("移到任务栏右侧", actions["right"]),
                  Entry("显示 / 隐藏悬浮条", toggle), Entry("刷新详情", actions["error"]),
                  Entry(), Entry("退出", quit_app)]
         return rows
 
-    def fill_menu(target, rows):
-        for row in rows:
-            if not row.title:
-                target.add_separator()
-            elif row.children is not None:
-                submenu = tk.Menu(target, tearoff=False, font=("Microsoft YaHei UI", 10))
-                fill_menu(submenu, row.children)
-                target.add_cascade(label=row.title, menu=submenu)
-            elif row.checked is not None:
-                target.add_checkbutton(label=row.title, variable=lock_state, command=row.action)
-            else:
-                target.add_command(label=row.title, command=row.action, state="normal" if row.action else "disabled")
-
     def show_menu(x=None, y=None):
-        # Destroy old submenus along with rebuilding current account details.
-        for child in list(menu.winfo_children()):
-            child.destroy()
-        menu.delete(0, "end")
-        fill_menu(menu, entries())
-        if x is None:
-            x, y = root.winfo_pointerxy()
-        menu.update_idletasks()
-        if y + menu.winfo_reqheight() > root.winfo_screenheight():
-            y -= menu.winfo_reqheight()
-        try:
-            menu.tk_popup(x, max(0, y))
-        finally:
-            menu.grab_release()
+        from src.windows_popup import popup_menu
+        popup_menu(root, entries())
 
     actions["menu"] = show_menu
     label.bind("<Button-3>", lambda e: show_menu(e.x_root, e.y_root))
