@@ -31,7 +31,9 @@ class WindowsInteractionTests(unittest.TestCase):
                     root.update()
                     label = next(w for w in root.winfo_children() if isinstance(w, tk.Label))
                     self.assertFalse(any(isinstance(w, tk.Button) for w in root.winfo_children()))
-                    self.assertAlmostEqual(root.attributes('-alpha'), 0.88, places=2)
+                    self.assertAlmostEqual(root.attributes('-alpha'), 1.0, places=2)
+                    self.assertEqual(str(root.attributes('-transparentcolor')), '#222b38')
+                    self.assertTrue(label.cget('image'))
                     self.assertEqual((root.winfo_x(), root.winfo_y()), (120, 300) if phase == 0 else (160, 330), f"phase={phase}, settings={settings.read_text()}")
                     # Assert Windows has a nonrectangular region for the rounded corners.
                     import ctypes
@@ -57,6 +59,11 @@ class WindowsInteractionTests(unittest.TestCase):
                             root.update()
                             self.assertEqual(popup.call_count, 2)
                             rows = popup.call_args.args[1]
+                            appearance_rows = next(row for row in rows if row.title == '外观').children
+                            next(row for row in appearance_rows if row.title == '半透明背景').action()
+                            self.assertAlmostEqual(root.attributes('-alpha'), 0.60, places=2)
+                            self.assertEqual(str(root.attributes('-transparentcolor')), '')
+                            next(row for row in appearance_rows if row.title == '透明背景').action()
                             next(row for row in rows if row.title == '移动悬浮条').action()
                             self.assertEqual(label.cget('cursor'), 'fleur')
                             label.event_generate('<Button-1>', x=15, y=15, rootx=135, rooty=315)

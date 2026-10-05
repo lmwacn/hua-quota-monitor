@@ -42,7 +42,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         import tkinter as tk
         from tkinter import messagebox
         import pystray
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageTk
     except ImportError:
         print("请先安装 Windows 界面依赖：python -m pip install -r requirements-windows.txt")
         return 2
@@ -57,9 +57,12 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     root.title("Codex 额度")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.88)
+    root.attributes("-alpha", 1.0)
+    root.attributes("-transparentcolor", "#222b38")
     root.configure(bg="#222b38")
-    label = tk.Label(root, text="Codex · 正在读取额度…", bg="#222b38", fg="#eef2f7",
+    logo = Image.open(Path(__file__).resolve().parent.parent / "assets" / "codex-logo.png").convert("RGBA")
+    logo_photo = ImageTk.PhotoImage(logo.resize((22, 22), Image.Resampling.LANCZOS))
+    label = tk.Label(root, image=logo_photo, compound="left", text="Codex · 正在读取额度…", bg="#222b38", fg="#eef2f7",
                      font=("Microsoft YaHei UI", 10), padx=12, pady=4, cursor="arrow")
     label.pack(side="left")
     events = queue.Queue()
@@ -71,6 +74,9 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     except (OSError, ValueError):
         position = {}
     locked = position.get("locked", True) is not False
+    appearance = position.get("appearance", "transparent")
+    if appearance not in ("transparent", "translucent"):
+        appearance = "transparent"
     label.config(cursor="arrow" if locked else "fleur")
     from src.windows_appearance import round_window
     rounded_size = None
@@ -116,7 +122,18 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
             save_position()
 
     def save_position():
-        settings.write_text(json.dumps({"x": root.winfo_x(), "y": root.winfo_y(), "locked": locked}), encoding="utf-8")
+        settings.write_text(json.dumps({"x": root.winfo_x(), "y": root.winfo_y(), "locked": locked, "appearance": appearance}), encoding="utf-8")
+
+    def set_appearance(value, *, save=True):
+        nonlocal appearance
+        appearance = value
+        root.attributes("-transparentcolor", "#222b38" if value == "transparent" else "")
+        root.attributes("-alpha", 1.0 if value == "transparent" else 0.60)
+        if save:
+            save_position()
+            icon.update_menu()
+
+    set_appearance(appearance, save=False)
 
     def toggle_lock():
         nonlocal locked, drag
@@ -222,7 +239,10 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
 
     def entries():
         rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
-        rows += [Entry(), Entry("移动悬浮条" if locked else "固定当前位置", toggle_lock),
+        rows += [Entry(), Entry("外观", children=[
+                     Entry("透明背景", lambda: set_appearance("transparent"), checked=appearance == "transparent"),
+                     Entry("半透明背景", lambda: set_appearance("translucent"), checked=appearance == "translucent")]),
+                 Entry("移动悬浮条" if locked else "固定当前位置", toggle_lock),
                  Entry("移到任务栏左侧", actions["left"]), Entry("移到任务栏右侧", actions["right"]),
                  Entry("显示 / 隐藏悬浮条", toggle), Entry("刷新状态", children=[Entry(last_error[:180])]),
                  Entry(), Entry("退出", quit_app)]
@@ -260,10 +280,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     label.bind("<Button-1>", press)
     label.bind("<B1-Motion>", move)
     label.bind("<ButtonRelease-1>", release)
-    image = Image.new("RGBA", (64, 64), "#182332")
-    draw = ImageDraw.Draw(image)
-    draw.arc((10, 10, 54, 54), 35, 325, fill="#82e3bc", width=8)
-    draw.ellipse((27, 27, 37, 37), fill="#82e3bc")
+    image = logo.resize((64, 64), Image.Resampling.LANCZOS)
     def callback(action):
         return lambda icon, item: events.put(("action", action))
     def queued_call(action):
