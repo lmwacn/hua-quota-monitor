@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from src.rate_windows import usage_rate_limit_sections
 
@@ -207,10 +208,15 @@ class UsageMonitor:
         except OSError:
             pass
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=5)
-        connection.execute("PRAGMA busy_timeout = 5000")
-        return connection
+        try:
+            connection.execute("PRAGMA busy_timeout = 5000")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
 
 def primary_window_key(usage: dict[str, Any]) -> str | None:

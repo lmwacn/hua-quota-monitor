@@ -1,6 +1,6 @@
 # hua-quota-monitor
 
-一个本地优先的 Codex 额度监控工具，提供 macOS 菜单栏、多账号管理、Web 趋势面板和命令行查询。
+一个本地优先的 Codex 额度监控工具，提供 Windows 托盘与悬浮条、macOS 菜单栏、多账号管理、Web 趋势面板和命令行查询。
 
 > [!IMPORTANT]
 > 本项目是社区工具，与 OpenAI 无隶属或官方合作关系。Codex/ChatGPT 额度查询依赖网页端接口，该接口不是公开 API，可能随时发生变化。
@@ -61,6 +61,16 @@ python main.py dashboard
 ```bash
 python main.py dashboard --port 49173
 python main.py dashboard --no-open
+```
+
+## Windows 托盘与悬浮条
+
+Windows 10/11 可运行原生托盘和额度悬浮条，详见 [Windows 使用说明](docs/windows.md)。
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-windows.txt
+.\.venv\Scripts\pythonw.exe main.py widget
 ```
 
 ## 查询 Codex 额度
