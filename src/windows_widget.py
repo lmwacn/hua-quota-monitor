@@ -218,14 +218,13 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     actions = {"toggle": toggle, "refresh": refresh, "dashboard": open_dashboard,
                "left": lambda: place("left"), "right": place, "quit": quit_app,
                "lock": toggle_lock, "add": lambda: import_account(True),
-               "import": import_account,
-               "error": lambda: messagebox.showinfo("刷新详情", last_error, parent=root)}
+               "import": import_account}
 
     def entries():
         rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
         rows += [Entry(), Entry("移动悬浮条" if locked else "固定当前位置", toggle_lock),
                  Entry("移到任务栏左侧", actions["left"]), Entry("移到任务栏右侧", actions["right"]),
-                 Entry("显示 / 隐藏悬浮条", toggle), Entry("刷新详情", actions["error"]),
+                 Entry("显示 / 隐藏悬浮条", toggle), Entry("刷新状态", children=[Entry(last_error[:180])]),
                  Entry(), Entry("退出", quit_app)]
         return rows
 
