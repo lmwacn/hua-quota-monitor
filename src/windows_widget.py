@@ -7,6 +7,8 @@ import queue
 import threading
 import webbrowser
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from src.windows_menu import Entry, quota_entries
 
 from src.account_store import AccountStore
 from src.dashboard_server import create_dashboard_server
@@ -55,18 +57,44 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     root.title("Codex 额度")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
-    root.attributes("-alpha", 0.96)
-    label = tk.Label(root, text="Codex · 正在读取额度…", bg="#182332", fg="#82e3bc",
-                     font=("Microsoft YaHei UI", 10), padx=12, pady=5, cursor="fleur")
+    root.attributes("-alpha", 0.82)
+    root.configure(bg="#243044")
+    label = tk.Label(root, text="Codex · 正在读取额度…", bg="#243044", fg="#dcece7",
+                     font=("Microsoft YaHei UI", 10), padx=16, pady=6, cursor="arrow")
     label.pack()
     events = queue.Queue()
     settings = store_dir / "windows-widget.json"
+    try:
+        position = json.loads(settings.read_text(encoding="utf-8"))
+        if not isinstance(position, dict):
+            position = {}
+    except (OSError, ValueError):
+        position = {}
+    locked = position.get("locked", True) is not False
+    label.config(cursor="arrow" if locked else "fleur")
+    from src.windows_appearance import round_window
+    rounded_size = None
+    def update_shape():
+        nonlocal rounded_size
+        size = (root.winfo_width(), root.winfo_height())
+        if size != rounded_size:
+            rounded_size = size
+            round_window(root)
+    root.bind("<Configure>", lambda event: root.after_idle(update_shape) if event.widget is root else None)
     busy = False
     closed = False
     last_error = "暂无错误。"
     server = None
     dashboard_url = None
+    poll_timer = None
+    tick_timer = None
     drag = None
+    click_origin = None
+    dragged = False
+    results = {}
+    profiles = store.list_accounts()
+    selected = None
+    main_result = None
 
     def place(side="right", *, save=True):
         root.update_idletasks()
@@ -88,7 +116,16 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
             save_position()
 
     def save_position():
-        settings.write_text(json.dumps({"x": root.winfo_x(), "y": root.winfo_y()}), encoding="utf-8")
+        settings.write_text(json.dumps({"x": root.winfo_x(), "y": root.winfo_y(), "locked": locked}), encoding="utf-8")
+
+    def toggle_lock():
+        nonlocal locked, drag
+        locked = not locked
+        drag = None
+        label.config(cursor="arrow" if locked else "fleur")
+        lock_state.set(locked)
+        save_position()
+        icon.update_menu()
 
     def toggle():
         if root.state() == "withdrawn":
@@ -103,10 +140,13 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         busy = True
         def worker():
             try:
-                # Respect the selected monitor account; otherwise read current auth directly.
-                profile = store.get_current() or service.canonical_profile()
-                result = service.fetch_profile(profile, active_name=store.detect_active_name())
-                events.put(("result", result))
+                current_profiles = store.list_accounts()
+                current = store.get_current()
+                active = store.detect_active_name()
+                targets = current_profiles or [service.canonical_profile()]
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    fetched = list(pool.map(lambda profile: service.fetch_profile(profile, active_name=active), targets))
+                events.put(("batch", (current_profiles, current.name if current else None, fetched)))
             except Exception as exc:
                 events.put(("result", {"usage": None, "error": str(exc)}))
         threading.Thread(target=worker, daemon=True, name="windows-quota").start()
@@ -125,33 +165,127 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     def quit_app():
         nonlocal closed
         closed = True
+        for timer in (poll_timer, tick_timer):
+            if timer is not None:
+                root.after_cancel(timer)
         save_position()
         icon.stop()
         if server is not None:
             threading.Thread(target=server.shutdown, daemon=True).start()
         root.destroy()
 
+    def select_account(name):
+        nonlocal selected, main_result
+        try:
+            store.set_current(name)
+            selected = name
+            main_result = results.get(name)
+            if main_result:
+                label.config(text=quota_text(main_result))
+            refresh()
+        except Exception as exc:
+            messagebox.showerror("设置失败", str(exc), parent=root)
+
+    def rename_account(name):
+        from tkinter import simpledialog
+        display = simpledialog.askstring("重命名账号", "显示名称：", parent=root,
+                                        initialvalue=store.get_account(name).display_name)
+        if display:
+            try:
+                store.set_display_name(name, display)
+                refresh()
+            except Exception as exc:
+                messagebox.showerror("重命名失败", str(exc), parent=root)
+
+    def import_account(current=False):
+        from tkinter import filedialog, simpledialog
+        path = str(auth_file) if current else filedialog.askopenfilename(parent=root,
+            title="选择 auth.json", filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+        display = simpledialog.askstring("添加账号", "账号显示名称：", parent=root)
+        if not display:
+            return
+        try:
+            names = {p.name for p in store.list_accounts()}
+            index = 1
+            while f"account-{index}" in names:
+                index += 1
+            store.import_account(f"account-{index}", path, display_name=display, make_current=not names)
+            refresh()
+        except Exception as exc:
+            messagebox.showerror("导入失败", str(exc), parent=root)
+
     actions = {"toggle": toggle, "refresh": refresh, "dashboard": open_dashboard,
                "left": lambda: place("left"), "right": place, "quit": quit_app,
+               "lock": toggle_lock, "add": lambda: import_account(True),
+               "import": import_account,
                "error": lambda: messagebox.showinfo("刷新详情", last_error, parent=root)}
-    menu = tk.Menu(root, tearoff=False)
-    for title, action in [("刷新额度", "refresh"), ("打开详细面板", "dashboard"),
-                          ("移到任务栏左侧", "left"), ("移到任务栏右侧", "right"),
-                          ("隐藏悬浮条", "toggle"), ("刷新详情", "error"), ("退出", "quit")]:
-        menu.add_command(label=title, command=actions[action])
-    label.bind("<Button-3>", lambda e: menu.tk_popup(e.x_root, e.y_root))
-    label.bind("<Double-Button-1>", lambda e: open_dashboard())
+    lock_state = tk.BooleanVar(root, value=locked)
+    menu = tk.Menu(root, tearoff=False, font=("Microsoft YaHei UI", 10))
+
+    def entries():
+        rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
+        rows += [Entry(), Entry("锁定位置", toggle_lock, checked=locked),
+                 Entry("移到任务栏左侧", actions["left"]), Entry("移到任务栏右侧", actions["right"]),
+                 Entry("显示 / 隐藏悬浮条", toggle), Entry("刷新详情", actions["error"]),
+                 Entry(), Entry("退出", quit_app)]
+        return rows
+
+    def fill_menu(target, rows):
+        for row in rows:
+            if not row.title:
+                target.add_separator()
+            elif row.children is not None:
+                submenu = tk.Menu(target, tearoff=False, font=("Microsoft YaHei UI", 10))
+                fill_menu(submenu, row.children)
+                target.add_cascade(label=row.title, menu=submenu)
+            elif row.checked is not None:
+                target.add_checkbutton(label=row.title, variable=lock_state, command=row.action)
+            else:
+                target.add_command(label=row.title, command=row.action, state="normal" if row.action else "disabled")
+
+    def show_menu(x=None, y=None):
+        # Destroy old submenus along with rebuilding current account details.
+        for child in list(menu.winfo_children()):
+            child.destroy()
+        menu.delete(0, "end")
+        fill_menu(menu, entries())
+        if x is None:
+            x, y = root.winfo_pointerxy()
+        menu.update_idletasks()
+        if y + menu.winfo_reqheight() > root.winfo_screenheight():
+            y -= menu.winfo_reqheight()
+        try:
+            menu.tk_popup(x, max(0, y))
+        finally:
+            menu.grab_release()
+
+    actions["menu"] = show_menu
+    label.bind("<Button-3>", lambda e: show_menu(e.x_root, e.y_root))
 
     def press(event):
-        nonlocal drag
-        drag = (event.x_root-root.winfo_x(), event.y_root-root.winfo_y())
+        nonlocal drag, click_origin, dragged
+        click_origin = (event.x_root, event.y_root)
+        dragged = False
+        if not locked:
+            drag = (event.x_root-root.winfo_x(), event.y_root-root.winfo_y())
+
     def move(event):
-        if drag:
-            root.geometry(f"{event.x_root-drag[0]:+d}{event.y_root-drag[1]:+d}")
+        nonlocal dragged
+        if drag and not locked:
+            if max(abs(event.x_root-click_origin[0]), abs(event.y_root-click_origin[1])) >= 5:
+                dragged = True
+            if dragged:
+                root.geometry(f"{event.x_root-drag[0]:+d}{event.y_root-drag[1]:+d}")
+
     def release(event):
         nonlocal drag
         drag = None
-        save_position()
+        if dragged:
+            save_position()
+        else:
+            show_menu(event.x_root, event.y_root)
     label.bind("<Button-1>", press)
     label.bind("<B1-Motion>", move)
     label.bind("<ButtonRelease-1>", release)
@@ -161,18 +295,29 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     draw.ellipse((27, 27, 37, 37), fill="#82e3bc")
     def callback(action):
         return lambda icon, item: events.put(("action", action))
-    icon = pystray.Icon("hua-quota-monitor", image, "Codex 额度监控", pystray.Menu(
-        pystray.MenuItem("显示 / 隐藏悬浮条", callback("toggle"), default=True),
-        pystray.MenuItem("刷新额度", callback("refresh")),
-        pystray.MenuItem("打开详细面板", callback("dashboard")),
-        pystray.MenuItem("移到任务栏左侧", callback("left")),
-        pystray.MenuItem("移到任务栏右侧", callback("right")),
-        pystray.MenuItem("退出", callback("quit"))))
+    def queued_call(action):
+        return lambda icon, item: events.put(("call", action))
+
+    def tray_items(rows):
+        for row in rows:
+            if not row.title:
+                yield pystray.Menu.SEPARATOR
+            elif row.children is not None:
+                yield pystray.MenuItem(row.title, pystray.Menu(*tray_items(row.children)))
+            else:
+                action = queued_call(row.action) if row.action else None
+                checked = (lambda item, value=row.checked: value) if row.checked is not None else None
+                yield pystray.MenuItem(row.title, action, enabled=row.action is not None, checked=checked)
+
+    def tray_menu():
+        yield pystray.MenuItem("额度详情", callback("menu"), default=True, visible=False)
+        yield from tray_items(entries())
+
+    icon = pystray.Icon("hua-quota-monitor", image, "Codex 额度监控", pystray.Menu(tray_menu))
     threading.Thread(target=icon.run, daemon=True, name="windows-tray").start()
 
     place(save=False)
     try:
-        position = json.loads(settings.read_text(encoding="utf-8"))
         x, y = int(position["x"]), int(position["y"])
         # Keep saved positions only when visible on a connected display.
         monitor_point = wintypes.POINT(x, y)
@@ -184,25 +329,33 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
         pass
 
     def poll():
-        nonlocal busy, last_error
+        nonlocal busy, last_error, main_result, profiles, selected, results, poll_timer
         while not events.empty():
             kind, value = events.get_nowait()
-            if kind == "action":
-                actions[value]()
+            if kind in ("action", "call"):
+                (actions[value] if kind == "action" else value)()
                 if closed:
                     return
             else:
                 busy = False
+                if kind == "batch":
+                    profiles, selected, fetched = value
+                    results = {getattr(r["profile"], "name", None) or "canonical": r for r in fetched}
+                    value = results.get(selected) or fetched[0]
+                main_result = value
                 text = quota_text(value)
                 label.config(text=text)
                 icon.title = text[:127]
                 last_error = value.get("error") or "最近一次刷新成功。"
-        root.after(100, poll)
+                icon.update_menu()
+        poll_timer = root.after(100, poll)
 
     def tick():
+        nonlocal tick_timer
         refresh()
-        root.after(max(15, interval)*1000, tick)
-    root.after(100, poll)
+        tick_timer = root.after(max(15, interval)*1000, tick)
+    root.protocol("WM_DELETE_WINDOW", quit_app)
+    poll_timer = root.after(100, poll)
     tick()
     try:
         root.mainloop()
