@@ -58,12 +58,12 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     root.overrideredirect(True)
     root.attributes("-topmost", True)
     root.attributes("-alpha", 1.0)
-    root.attributes("-transparentcolor", "#222b38")
+    root.attributes("-transparentcolor", "")
     root.configure(bg="#222b38")
     logo = Image.open(Path(__file__).resolve().parent.parent / "assets" / "codex-logo.png").convert("RGBA")
     logo_photo = ImageTk.PhotoImage(logo.resize((22, 22), Image.Resampling.LANCZOS))
-    label = tk.Label(root, image=logo_photo, compound="left", text="Codex · 正在读取额度…", bg="#222b38", fg="#eef2f7",
-                     font=("Microsoft YaHei UI", 10), padx=12, pady=4, cursor="arrow")
+    label = tk.Label(root, image=logo_photo, compound="left", text="Codex · 正在读取额度…", bg="#222b38", fg="#ffffff",
+                     font=("Microsoft YaHei UI", 10, "bold"), padx=12, pady=4, cursor="arrow")
     label.pack(side="left")
     events = queue.Queue()
     settings = store_dir / "windows-widget.json"
@@ -74,9 +74,9 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     except (OSError, ValueError):
         position = {}
     locked = position.get("locked", True) is not False
-    appearance = position.get("appearance", "transparent")
-    if appearance not in ("transparent", "translucent"):
-        appearance = "transparent"
+    appearance = position.get("appearance", "readable")
+    if appearance not in ("readable", "translucent"):
+        appearance = "readable"
     label.config(cursor="arrow" if locked else "fleur")
     from src.windows_appearance import round_window
     rounded_size = None
@@ -127,8 +127,8 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     def set_appearance(value, *, save=True):
         nonlocal appearance
         appearance = value
-        root.attributes("-transparentcolor", "#222b38" if value == "transparent" else "")
-        root.attributes("-alpha", 1.0 if value == "transparent" else 0.60)
+        root.attributes("-transparentcolor", "")
+        root.attributes("-alpha", 1.0 if value == "readable" else 0.82)
         if save:
             save_position()
             icon.update_menu()
@@ -240,7 +240,7 @@ def run_widget(*, auth_file: Path, base_url: str, store_dir: Path, interval: int
     def entries():
         rows = quota_entries(main_result, profiles, results, selected, actions, select_account, rename_account)
         rows += [Entry(), Entry("外观", children=[
-                     Entry("透明背景", lambda: set_appearance("transparent"), checked=appearance == "transparent"),
+                     Entry("清晰背景", lambda: set_appearance("readable"), checked=appearance == "readable"),
                      Entry("半透明背景", lambda: set_appearance("translucent"), checked=appearance == "translucent")]),
                  Entry("移动悬浮条" if locked else "固定当前位置", toggle_lock),
                  Entry("移到任务栏左侧", actions["left"]), Entry("移到任务栏右侧", actions["right"]),
