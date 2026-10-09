@@ -142,6 +142,22 @@ class AccountStore:
                 self._set_current_unlocked(name)
             return self._profile_unlocked(name)
 
+    def reauthorize_account(self, name: str, credential: bytes) -> AccountProfile:
+        """更新同一账号的授权，并同步已激活账号以免旧凭据回写。"""
+        self.validate_name(name)
+        metadata = _parse_auth_bytes(credential, Path("网页授权结果"))
+        with self._locked():
+            profile = self._profile_unlocked(name)
+            if not profile.account_id or metadata.account_id != profile.account_id:
+                raise InvalidAuthFileError(
+                    "授权账号与所选账号不一致或无法确认账号身份，请使用原账号重新登录。"
+                )
+            if profile.is_active:
+                # 先更新同步源，避免定时刷新用旧凭据覆盖本次授权。
+                self._atomic_write(self.canonical_auth_path, credential)
+            self._atomic_write(profile.auth_path, credential)
+            return self._profile_unlocked(name)
+
     def list_accounts(self) -> list[AccountProfile]:
         with self._locked():
             current = self._current_name_unlocked()

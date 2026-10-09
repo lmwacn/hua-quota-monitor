@@ -89,6 +89,65 @@ class AccountStoreTests(unittest.TestCase):
         self.assertEqual(_mode(self.store.state_path), 0o600)
         self.assertEqual(_mode(self.store.lock_path), 0o600)
 
+    def test_reauthorize_active_account_survives_canonical_sync(self) -> None:
+        original = _auth("acct-a", "a@example.com", "old")
+        source = self._source("personal.json", original)
+        self.store.import_account("personal", source, display_name="个人", make_current=True)
+        self.canonical.parent.mkdir()
+        self.canonical.write_bytes(original)
+        state = self.store.state_path.read_bytes()
+        renewed = _auth("acct-a", "a@example.com", "renewed")
+
+        profile = self.store.reauthorize_account("personal", renewed)
+        self.store.sync_canonical()
+
+        self.assertEqual(profile.display_name, "个人")
+        self.assertTrue(profile.is_current)
+        self.assertEqual(profile.auth_path.read_bytes(), renewed)
+        self.assertEqual(self.canonical.read_bytes(), renewed)
+        self.assertEqual(self.store.state_path.read_bytes(), state)
+        self.assertEqual(_mode(profile.auth_path), 0o600)
+        self.assertEqual(_mode(self.canonical), 0o600)
+
+    def test_reauthorize_inactive_account_keeps_active_account_and_selection(self) -> None:
+        personal = self._source("personal.json", _auth("acct-a", "a@example.com", "old-a"))
+        work = self._source("work.json", _auth("acct-b", "b@example.com", "old-b"))
+        self.store.import_account("personal", personal, make_current=True)
+        self.store.import_account("work", work, display_name="工作")
+        self.canonical.parent.mkdir()
+        self.canonical.write_bytes(personal.read_bytes())
+        renewed = _auth("acct-b", "b@example.com", "renewed-b")
+
+        profile = self.store.reauthorize_account("work", renewed)
+
+        self.assertEqual(profile.auth_path.read_bytes(), renewed)
+        self.assertEqual(profile.display_name, "工作")
+        self.assertEqual(self.store.get_current().name, "personal")
+        self.assertEqual(self.canonical.read_bytes(), personal.read_bytes())
+        self.assertEqual(len(self.store.list_accounts()), 2)
+
+    def test_reauthorize_rejects_wrong_or_unknown_identity_and_invalid_credentials(self) -> None:
+        original = _auth("acct-a", "a@example.com", "old")
+        source = self._source("personal.json", original)
+        profile = self.store.import_account("personal", source, make_current=True)
+        self.canonical.parent.mkdir()
+        self.canonical.write_bytes(original)
+        for credential in (
+            _auth("acct-b", "a@example.com", "wrong-account"),
+            _auth("", "a@example.com", "unknown-account"),
+            b"invalid json",
+        ):
+            with self.subTest(credential=credential):
+                with self.assertRaises(InvalidAuthFileError):
+                    self.store.reauthorize_account("personal", credential)
+                self.assertEqual(profile.auth_path.read_bytes(), original)
+                self.assertEqual(self.canonical.read_bytes(), original)
+
+    def test_reauthorize_does_not_recreate_deleted_account(self) -> None:
+        with self.assertRaises(AccountNotFoundError):
+            self.store.reauthorize_account("deleted", _auth("acct-a", "a@example.com", "new"))
+        self.assertEqual(self.store.list_accounts(), [])
+
     def test_existing_canonical_auth_permissions_are_tightened(self) -> None:
         self.canonical.parent.mkdir(parents=True)
         self.canonical.write_bytes(_auth("acct-a", "a@example.com", "secret-a"))

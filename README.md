@@ -84,6 +84,7 @@ python main.py codex --auth-file /path/to/auth.json
 
 - 添加当前账号。
 - 通过 Codex CLI 的浏览器登录流程添加账号。
+- 在账号子菜单点击“重新授权…”更新失效登录态，使用原账号完成网页登录后自动刷新额度；保留账号名称、主账号设置和历史记录，登录其他账号时拒绝覆盖。
 - 从其他 `auth.json` 导入账号。
 - 设置菜单栏主账号和修改显示名称。
 - 在每个账号的子菜单查看重置卡到期时间。
@@ -108,7 +109,9 @@ python main.py account rename work "工作账号"
 python main.py account import work --auth-file /path/to/auth.json --replace
 ```
 
-设置“菜单栏主账号”只改变默认展示，不会切换 ChatGPT 登录。菜单中的“切换到此账号并重启 ChatGPT”才会替换 `~/.codex/auth.json`；切换前会先保存原账号的最新登录态。
+设置“菜单栏主账号”只改变默认展示，不会切换 ChatGPT 登录。菜单中的“切换到此账号并重启 ChatGPT”会替换 `~/.codex/auth.json` 并切换登录账号；切换前会先保存原账号的最新登录态。
+
+重新授权客户端当前账号时，也会更新 `~/.codex/auth.json`，避免旧凭据自动同步回来；重新授权其他账号只更新工具保存的凭据。
 
 ## 缓存与历史记录
 

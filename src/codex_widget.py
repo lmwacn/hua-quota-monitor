@@ -339,6 +339,7 @@ def _run_menubar_impl(
                         submenu, "切换到此账号并重启 ChatGPT", "switchAccount:", name
                     )
                 if self.account_store is not None:
+                    self._action(submenu, "重新授权…", "reauthorizeAccount:", name)
                     self._action(submenu, "重命名账号…", "renameAccount:", name)
                     self._action(submenu, "删除账号…", "deleteAccount:", name)
                 root.setSubmenu_(submenu)
@@ -535,6 +536,35 @@ def _run_menubar_impl(
                 return
             self._import_account_source(source)
 
+        def reauthorizeAccount_(self, sender: Any) -> None:
+            if self.account_store is None:
+                self._alert("无法重新授权", "当前未启用多账号存储。")
+                return
+            if self.web_auth_in_progress:
+                self._alert("正在等待授权", "请先在浏览器中完成上一次 ChatGPT 登录。")
+                return
+            name = str(sender.representedObject())
+            try:
+                profile = self.account_store.get_account(name)
+            except Exception as exc:
+                self._alert("无法读取账号", str(exc))
+                return
+            display_name = _profile_display_name(profile)
+            alert = AppKit.NSAlert.alloc().init()
+            alert.setMessageText_(f"重新授权“{display_name}”")
+            identity = profile.email or "原账号"
+            alert.setInformativeText_(
+                f"即将打开 Codex 官方登录页，请使用 {identity} 登录。"
+                "成功后更新此账号的凭据，保留名称、主账号设置和历史记录；"
+                "若此账号是客户端当前账号，也会同步更新客户端凭据。"
+                "登录其他账号时不会覆盖原凭据。"
+            )
+            alert.addButtonWithTitle_("打开网页授权")
+            alert.addButtonWithTitle_("取消")
+            if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
+                return
+            self._start_web_authorization(display_name, name)
+
         def webAuthorizeAccount_(self, sender: Any) -> None:
             if self.account_store is None:
                 self._alert("无法网页授权", "当前未启用多账号存储。")
@@ -555,21 +585,39 @@ def _run_menubar_impl(
             alert.addButtonWithTitle_("取消")
             if alert.runModal() != AppKit.NSAlertFirstButtonReturn:
                 return
+            self._start_web_authorization(display_name)
+
+        @objc.python_method
+        def _start_web_authorization(self, display_name: str, target_name: str | None = None) -> None:
             self.web_auth_in_progress = True
             Thread(
                 target=self._run_web_authorization,
-                args=(display_name,),
+                args=(display_name, target_name),
                 name="codex-web-authorization",
                 daemon=True,
             ).start()
 
         @objc.python_method
-        def _run_web_authorization(self, display_name: str) -> None:
+        def _run_web_authorization(self, display_name: str, target_name: str | None = None) -> None:
             name = None
             error = None
-            temporary_path = None
             try:
                 credential = login_with_chatgpt(timeout=600)
+                if target_name is not None:
+                    self.account_store.reauthorize_account(target_name, credential)
+                    name = target_name
+                else:
+                    name = self._save_web_account(display_name, credential)
+            except Exception as exc:
+                error = str(exc)
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "finishWebAuthorization:", (display_name, name, error, target_name is not None), False
+            )
+
+        @objc.python_method
+        def _save_web_account(self, display_name: str, credential: bytes) -> str:
+            temporary_path = None
+            try:
                 existing = {
                     str(_profile_value(profile, "name"))
                     for profile in self.account_store.list_accounts()
@@ -592,24 +640,20 @@ def _run_menubar_impl(
                     display_name=display_name,
                     make_current=not had_current,
                 )
-            except Exception as exc:
-                error = str(exc)
+                return name
             finally:
                 if temporary_path is not None:
                     temporary_path.unlink(missing_ok=True)
-            self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "finishWebAuthorization:", (display_name, name, error), False
-            )
 
-        def finishWebAuthorization_(self, payload: tuple[str, str | None, str | None]) -> None:
-            display_name, name, error = payload
+        def finishWebAuthorization_(self, payload: tuple[str, str | None, str | None, bool]) -> None:
+            display_name, name, error, reauthorized = payload
             self.web_auth_in_progress = False
             if error:
                 self._alert("网页授权失败", error)
                 return
             self._alert(
-                "账号已添加",
-                f"已通过 ChatGPT 网页授权并安全保存“{display_name}”。",
+                "授权已更新" if reauthorized else "账号已添加",
+                f"已通过 ChatGPT 网页授权并安全保存“{display_name}”的凭据。",
             )
             self.refreshAll_(None)
 
