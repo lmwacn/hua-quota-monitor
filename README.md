@@ -50,6 +50,8 @@ uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
 
 首次启动时，如果存在 `~/.codex/auth.json`，当前账号会自动加入监控。点击菜单栏图标可以刷新所有账号、管理账号或打开额度趋势面板。
 
+在“账号监控”中展开某个账号，点击“打开账号 JSON 所在位置”，即可在 Finder 中打开该账号的存储目录并选中 `auth.json`。
+
 如果只需要 Web 面板，不需要安装 PyObjC：
 
 ```bash

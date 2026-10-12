@@ -339,6 +339,9 @@ def _run_menubar_impl(
                         submenu, "切换到此账号并重启 ChatGPT", "switchAccount:", name
                     )
                 if self.account_store is not None:
+                    self._action(
+                        submenu, "打开账号 JSON 所在位置", "revealAccountJSON:", name
+                    )
                     self._action(submenu, "重新授权…", "reauthorizeAccount:", name)
                     self._action(submenu, "重命名账号…", "renameAccount:", name)
                     self._action(submenu, "删除账号…", "deleteAccount:", name)
@@ -674,6 +677,25 @@ def _run_menubar_impl(
             if url is None:
                 return
             self._import_account_source(Path(str(url.path())))
+
+        def revealAccountJSON_(self, sender: Any) -> None:
+            if self.account_store is None:
+                self._alert("无法打开账号 JSON", "当前未启用多账号存储。")
+                return
+            try:
+                profile = self.account_store.get_account(str(sender.representedObject()))
+                auth_path = Path(_profile_value(profile, "auth_path"))
+                if not auth_path.is_file():
+                    self._alert("无法打开账号 JSON", "账号的 auth.json 文件不存在。")
+                    return
+                opened = AppKit.NSWorkspace.sharedWorkspace().selectFile_inFileViewerRootedAtPath_(
+                    str(auth_path), ""
+                )
+            except Exception as exc:
+                self._alert("无法打开账号 JSON", str(exc))
+                return
+            if not opened:
+                self._alert("无法打开账号 JSON", "请检查文件是否存在及目录访问权限。")
 
         def openAccountStore_(self, sender: Any) -> None:
             if self.account_store is None:
