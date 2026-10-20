@@ -6,6 +6,7 @@ import stat
 import sys
 import tempfile
 import textwrap
+from threading import Event
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -14,6 +15,7 @@ from src.web_auth import (
     CodexNotFoundError,
     InvalidWebAuthResultError,
     WebAuthCommandError,
+    WebAuthCancelledError,
     WebAuthTimeoutError,
     _resolve_codex_executable,
     login_with_chatgpt,
@@ -84,6 +86,64 @@ class WebAuthTests(unittest.TestCase):
         login_path = path_marker.read_text(encoding="utf-8").split(os.pathsep)
         self.assertEqual(login_path[0], str(fake.parent))
         self.assertIn("/usr/local/bin", login_path)
+
+    def _fake_auth_server(self, complete: bool) -> Path:
+        return self._fake_codex(
+            """
+            import json, os, pathlib, sys, time
+            assert sys.argv[1] == "app-server"
+            request = json.loads(sys.stdin.readline())
+            assert request["method"] == "initialize"
+            print(json.dumps({"id": 1, "result": {}}), flush=True)
+            assert json.loads(sys.stdin.readline())["method"] == "initialized"
+            assert json.loads(sys.stdin.readline())["method"] == "account/login/start"
+            home = pathlib.Path(os.environ["CODEX_HOME"])
+            pathlib.Path(os.environ["WEB_AUTH_TEST_MARKER"]).write_text(str(home))
+            print(json.dumps({"id": 2, "result": {
+                "authUrl": "https://auth.openai.com/oauth/authorize?state=test",
+                "loginId": "test-login", "type": "chatgpt"
+            }}), flush=True)
+            """ + ("""
+            (home / "auth.json").write_text('{"tokens": {"test": true}}')
+            print(json.dumps({"method": "account/login/completed", "params": {
+                "loginId": "test-login", "success": True
+            }}), flush=True)
+            """ if complete else "") + "\n            time.sleep(30)\n"
+        )
+
+    def test_interactive_link_and_success_clean_up_server(self) -> None:
+        marker = self.base / "server-home.txt"
+        urls = []
+        with mock.patch.dict(os.environ, {"WEB_AUTH_TEST_MARKER": str(marker)}):
+            result = login_with_chatgpt(
+                codex_executable=self._fake_auth_server(True), timeout=5,
+                on_authorization_url=urls.append,
+            )
+        self.assertEqual(urls, ["https://auth.openai.com/oauth/authorize?state=test"])
+        self.assertEqual(json.loads(result), {"tokens": {"test": True}})
+        self.assertFalse(Path(marker.read_text()).exists())
+
+    def test_interactive_cancel_discards_even_completed_credentials(self) -> None:
+        marker = self.base / "cancel-home.txt"
+        cancel = Event()
+        with mock.patch.dict(os.environ, {"WEB_AUTH_TEST_MARKER": str(marker)}):
+            with self.assertRaises(WebAuthCancelledError):
+                login_with_chatgpt(
+                    codex_executable=self._fake_auth_server(True), timeout=5,
+                    on_authorization_url=lambda url: cancel.set(), cancel_event=cancel,
+                )
+        if marker.exists():
+            self.assertFalse(Path(marker.read_text()).exists())
+
+    def test_interactive_timeout_cleans_home(self) -> None:
+        marker = self.base / "server-timeout-home.txt"
+        with mock.patch.dict(os.environ, {"WEB_AUTH_TEST_MARKER": str(marker)}):
+            with self.assertRaises(WebAuthTimeoutError):
+                login_with_chatgpt(
+                    codex_executable=self._fake_auth_server(False), timeout=0.5,
+                    on_authorization_url=lambda url: None,
+                )
+        self.assertFalse(Path(marker.read_text()).exists())
 
     def test_finds_npm_prefix_when_gui_path_has_no_codex(self) -> None:
         npm_prefix = self.base / "npm-prefix"

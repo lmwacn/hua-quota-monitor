@@ -6,6 +6,11 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import selectors
+from threading import Event
+from time import monotonic
+from typing import Callable
+from urllib.parse import urlsplit
 from pathlib import Path
 
 
@@ -18,6 +23,10 @@ class WebAuthError(RuntimeError):
 
 
 class CodexNotFoundError(WebAuthError):
+    pass
+
+
+class WebAuthCancelledError(WebAuthError):
     pass
 
 
@@ -39,6 +48,8 @@ def login_with_chatgpt(
     *,
     timeout: float = DEFAULT_LOGIN_TIMEOUT,
     codex_executable: Path | str | None = None,
+    on_authorization_url: Callable[[str], None] | None = None,
+    cancel_event: Event | None = None,
 ) -> bytes:
     """Log in through ChatGPT in an isolated ``CODEX_HOME`` and return auth bytes.
 
@@ -61,6 +72,12 @@ def login_with_chatgpt(
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(isolated_home)
         environment["PATH"] = _login_path(executable, environment.get("PATH", ""))
+
+        if on_authorization_url is not None:
+            return _interactive_login(
+                executable, environment, isolated_home, timeout,
+                on_authorization_url, cancel_event or Event(),
+            )
 
         try:
             process = subprocess.Popen(
@@ -91,6 +108,81 @@ def login_with_chatgpt(
 
         auth_path = isolated_home / "auth.json"
         return _read_auth_result(auth_path)
+
+
+def _interactive_login(
+    executable: str, environment: dict[str, str], home: Path, timeout: float,
+    on_url: Callable[[str], None], cancelled: Event,
+) -> bytes:
+    # app-server 返回链接，由界面决定是否打开浏览器。
+    try:
+        process = subprocess.Popen(
+            [executable, "app-server", "-c", 'cli_auth_credentials_store="file"'],
+            env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as exc:
+        raise CodexNotFoundError("无法启动 codex 命令，请检查 Codex CLI 安装") from exc
+
+    def send(message: dict) -> None:
+        process.stdin.write((json.dumps(message) + "\n").encode())
+        process.stdin.flush()
+
+    deadline = monotonic() + timeout
+    login_id = None
+    buffer = b""
+    try:
+        send({"id": 1, "method": "initialize", "params": {
+            "clientInfo": {"name": "hua_quota_monitor", "version": "1.0"},
+        }})
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                if cancelled.is_set():
+                    raise WebAuthCancelledError("已取消网页授权")
+                if monotonic() >= deadline:
+                    raise WebAuthTimeoutError(f"等待 ChatGPT 网页授权超时（{timeout:g} 秒）")
+                if not selector.select(timeout=min(0.1, max(0, deadline - monotonic()))):
+                    continue
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    raise WebAuthError("Codex 授权服务已退出，请重试")
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    try:
+                        message = json.loads(line)
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    if not isinstance(message, dict):
+                        continue
+                    if message.get("id") in (1, 2) and "error" in message:
+                        raise WebAuthError("Codex 无法启动网页授权，请检查 CLI 版本后重试")
+                    if message.get("id") == 1:
+                        send({"method": "initialized"})
+                        send({"id": 2, "method": "account/login/start",
+                              "params": {"type": "chatgpt"}})
+                    elif message.get("id") == 2:
+                        result = message.get("result") or {}
+                        url = result.get("authUrl", "")
+                        parsed = urlsplit(url)
+                        login_id = result.get("loginId")
+                        if parsed.scheme != "https" or parsed.hostname != "auth.openai.com" or not login_id:
+                            raise WebAuthError("Codex 未返回有效的授权链接")
+                        on_url(url)
+                    elif message.get("method") == "account/login/completed":
+                        result = message.get("params") or {}
+                        if login_id is None or result.get("loginId") != login_id:
+                            continue
+                        if cancelled.is_set():
+                            raise WebAuthCancelledError("已取消网页授权")
+                        if not result.get("success"):
+                            raise WebAuthError("ChatGPT 网页授权未完成，请重试")
+                        return _read_auth_result(home / "auth.json")
+    finally:
+        _terminate_process_group(process)
+        process.stdin.close()
+        process.stdout.close()
 
 
 def _resolve_codex_executable(executable: Path | str | None) -> str:
