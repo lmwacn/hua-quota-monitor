@@ -166,6 +166,16 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_widget(args: argparse.Namespace) -> int:
+    from src.windows_widget import run_widget
+    return run_widget(
+        auth_file=Path(args.auth_file).expanduser(),
+        base_url=args.base_url,
+        store_dir=Path(args.account_store).expanduser(),
+        interval=args.interval,
+    )
+
+
 def cmd_menubar(args: argparse.Namespace) -> int:
     if args.install_shortcut:
         shortcut = create_menubar_shortcut(
@@ -351,6 +361,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dashboard.add_argument("--no-open", action="store_true", help="启动后不自动打开浏览器")
     dashboard.set_defaults(func=cmd_dashboard)
+
+    widget = subparsers.add_parser("widget", help="启动 Windows 托盘和额度悬浮条")
+    widget.add_argument("--auth-file", default=DEFAULT_CODEX_AUTH_FILE)
+    widget.add_argument("--base-url", default="https://chatgpt.com")
+    widget.add_argument("--account-store", default="~/.hua-quota")
+    widget.add_argument("--interval", type=int, default=60)
+    widget.set_defaults(func=cmd_widget)
 
     windows = subparsers.add_parser("windows", help="查看内置时间窗口会解析成什么")
     windows.set_defaults(func=cmd_windows)

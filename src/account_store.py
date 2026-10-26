@@ -14,7 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-import fcntl
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 DEFAULT_STORE_ROOT = Path("~/.hua-quota").expanduser()
@@ -539,18 +542,20 @@ class AccountStore:
         descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         temporary_path = Path(temporary_name)
         try:
-            os.fchmod(descriptor, 0o600)
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary_path, path)
             path.chmod(0o600)
-            directory_descriptor = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
+            if os.name != "nt":
+                directory_descriptor = os.open(path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
         except Exception:
             try:
                 os.close(descriptor)
@@ -564,12 +569,25 @@ class AccountStore:
         with self._thread_lock:
             self._ensure_layout()
             descriptor = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            acquired = False
             try:
-                os.fchmod(descriptor, 0o600)
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if os.name == "nt":
+                    if os.fstat(descriptor).st_size == 0:
+                        os.write(descriptor, b"\0")
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_LOCK, 1)
+                else:
+                    os.fchmod(descriptor, 0o600)
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                acquired = True
                 yield
             finally:
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                if acquired:
+                    if os.name == "nt":
+                        os.lseek(descriptor, 0, os.SEEK_SET)
+                        msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
                 os.close(descriptor)
 
 

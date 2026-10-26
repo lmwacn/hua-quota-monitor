@@ -1,12 +1,13 @@
 # hua-quota-monitor
 
-一个本地优先的 Codex 额度监控工具，提供 macOS 菜单栏、多账号管理、Web 趋势面板和命令行查询。
+一个本地优先的 Codex 额度监控工具，提供 Windows 托盘与悬浮条、macOS 菜单栏、多账号管理、Web 趋势面板和命令行查询。
 
 > [!IMPORTANT]
 > 本项目是社区工具，与 OpenAI 无隶属或官方合作关系。Codex/ChatGPT 额度查询依赖网页端接口，该接口不是公开 API，可能随时发生变化。
 
 ## 功能
 
+- 在 Windows 托盘和可拖动悬浮条中查看额度，支持移动后固定、位置记忆和背景样式切换。
 - 在 macOS 菜单栏显示主账号剩余额度、重置时间、点数和重置卡。
 - 同时监控多个 Codex/ChatGPT 账号，支持设置主账号、重命名和切换登录账号。
 - 将每次成功读取的额度写入本地 SQLite，按账号和额度窗口独立保存。
@@ -29,11 +30,14 @@
 ## 运行要求
 
 - Python 3.10 或更高版本。
+- Windows 10/11 与包含 Tk 的 Python（仅 Windows 托盘和悬浮条需要）。
 - macOS 12 或更高版本（仅菜单栏功能需要）。
 - 已登录的 Codex CLI 或 ChatGPT/Codex 客户端，默认读取 `~/.codex/auth.json`。
 - 推荐安装 [`uv`](https://docs.astral.sh/uv/) 管理虚拟环境。
 
 ## 快速开始
+
+Windows 用户请按下方 [Windows 托盘与悬浮条](#windows-托盘与悬浮条) 安装；以下菜单栏步骤适用于 macOS。
 
 ```bash
 git clone https://github.com/lmwacn/hua-quota-monitor.git
@@ -65,6 +69,20 @@ python main.py dashboard --port 49173
 python main.py dashboard --no-open
 ```
 
+## Windows 托盘与悬浮条
+
+Windows 10/11 可运行原生托盘和额度悬浮条。进入项目目录后安装并启动：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-windows.txt
+.\.venv\Scripts\pythonw.exe main.py widget
+```
+
+安装后也可双击 `启动Windows悬浮条.vbs`。左键或右键打开额度菜单，选择“移动悬浮条”后拖动，再选择“固定当前位置”；位置会在重启后保留。默认使用深色清晰背景，菜单“外观”可切换半透明背景。账号监控支持导入、重命名和设置主账号。
+
+悬浮条覆盖任务栏时不会自动预留空间，也暂不跟随任务栏自动隐藏。详细操作、参数与平台限制见 [Windows 使用说明](docs/windows.md)。
+
 ## 查询 Codex 额度
 
 ```bash
@@ -82,7 +100,7 @@ python main.py codex --auth-file /path/to/auth.json
 
 ## 多账号管理
 
-菜单栏“账号监控”中可以：
+macOS 菜单栏“账号监控”中可以：
 
 - 添加当前账号。
 - 通过 Codex CLI 的浏览器登录流程添加账号。授权链接生成后，可复制到自选浏览器或点击“打开默认浏览器”，不会自动打开浏览器；等待期间再次点击网页授权入口，可重新复制、打开链接或取消授权。取消后清理本次临时凭据，不添加或覆盖账号。
@@ -121,8 +139,9 @@ python main.py account import work --auth-file /path/to/auth.json --replace
 
 ```text
 ~/.hua-quota/
-├── accounts/                 # 多账号凭据，目录权限 0700、文件权限 0600
+├── accounts/                 # 多账号凭据（Unix 目录 0700、文件 0600；Windows 使用目录 ACL）
 ├── state.json                # 主账号与账号索引
+├── windows-widget.json       # Windows 悬浮条位置、固定状态和外观
 └── usage-history.sqlite3     # 额度采样和短期缓存
 ```
 
@@ -196,6 +215,8 @@ python -m unittest discover -s tests -v
 - `src/account_store.py`：本地多账号凭据管理。
 - `src/dashboard_server.py`：Web 面板服务。
 - `src/codex_widget.py`：macOS 菜单栏应用。
+- `src/windows_widget.py`：Windows 托盘和额度悬浮条。
+- `src/windows_menu.py`、`src/windows_popup.py`：Windows 额度菜单内容与原生定位。
 
 欢迎提交 Issue 和 Pull Request。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

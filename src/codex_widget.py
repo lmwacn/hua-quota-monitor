@@ -1174,7 +1174,7 @@ def _format_credit_expiry(value: str) -> str:
 
 def _format_expiry_timestamp(timestamp: float, label: str) -> str:
     local_time = datetime.fromtimestamp(timestamp)
-    return f"{local_time.strftime('%-m月%-d日 %H:%M')} {label}，{_format_remaining(timestamp)}"
+    return f"{local_time.month}月{local_time.day}日 {local_time:%H:%M} {label}，{_format_remaining(timestamp)}"
 
 
 def _format_remaining(timestamp: float) -> str:
