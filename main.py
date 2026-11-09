@@ -177,11 +177,13 @@ def cmd_widget(args: argparse.Namespace) -> int:
 
 
 def cmd_menubar(args: argparse.Namespace) -> int:
+    sync_local_projects = getattr(args, "sync_local_projects", False)
     if args.install_shortcut:
         shortcut = create_menubar_shortcut(
             project_root=Path(__file__).resolve().parent,
             interval=args.interval,
             name=args.shortcut_name,
+            sync_local_projects=sync_local_projects,
         )
         print(f"桌面快捷按钮已创建：{shortcut}")
         return 0
@@ -213,6 +215,7 @@ def cmd_menubar(args: argparse.Namespace) -> int:
         width=args.width,
         height=args.height,
         alpha=args.alpha,
+        sync_local_projects=sync_local_projects,
     )
 
 
@@ -390,6 +393,10 @@ def build_parser() -> argparse.ArgumentParser:
     menubar.add_argument("--alpha", type=float, default=0.94, help="详细面板透明度（0.2~1.0）")
     menubar.add_argument("--install-shortcut", action="store_true", help="在桌面创建菜单栏启动按钮")
     menubar.add_argument("--shortcut-name", default="打开Codex顶栏", help="快捷按钮文件名（不带后缀）")
+    menubar.add_argument(
+        "--sync-local-projects", action="store_true",
+        help="在桌面客户端退出后双向同步已登录账号的本地项目、排序和置顶",
+    )
     menubar.set_defaults(func=cmd_menubar)
 
     account = subparsers.add_parser("account", help="管理顶栏监控的 Codex 账号")

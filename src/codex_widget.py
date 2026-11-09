@@ -12,6 +12,7 @@ from time import monotonic
 from typing import Any
 
 from src.dashboard_server import DEFAULT_DASHBOARD_PORT, create_dashboard_server
+from src.local_project_sync import LocalProjectSync
 from src.quota_service import QuotaService
 from src.rate_windows import rate_limit_windows
 from src.usage_monitor import UsageMonitor
@@ -27,6 +28,7 @@ def run_menubar(
     height: int,
     alpha: float,
     account_store: Any | None = None,
+    sync_local_projects: bool = False,
 ) -> int:
     """Run the native macOS menu-bar quota item."""
     return _run_menubar_impl(
@@ -34,11 +36,13 @@ def run_menubar(
         base_url=base_url,
         interval=interval,
         account_store=account_store,
+        sync_local_projects=sync_local_projects,
     )
 
 
 def _run_menubar_impl(
-    *, auth_file: Path, base_url: str, interval: int, account_store: Any | None
+    *, auth_file: Path, base_url: str, interval: int, account_store: Any | None,
+    sync_local_projects: bool,
 ) -> int:
     try:
         import AppKit
@@ -90,6 +94,11 @@ def _run_menubar_impl(
             self._action(self.menu, "打开额度趋势面板", "openDashboard:")
             self._action(self.menu, "退出", "quit:")
             self.status_item.setMenu_(self.menu)
+            if self.project_sync is not None:
+                Thread(
+                    target=self.project_sync.watch, args=(self.project_sync_stop,),
+                    name="codex-local-project-sync", daemon=True,
+                ).start()
             self.refreshAll_(None)
             self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
                 self.interval, self, "automaticRefresh:", None, True
@@ -865,6 +874,11 @@ def _run_menubar_impl(
         def _activate_in_background(self, name: str) -> None:
             def activate() -> None:
                 error = None
+                if self.project_sync is not None:
+                    try:
+                        self.project_sync.sync()
+                    except Exception as exc:
+                        print(f"切换账号前同步本地项目失败（{type(exc).__name__}）", flush=True)
                 try:
                     self.account_store.activate(name)
                 except Exception as exc:
@@ -898,6 +912,7 @@ def _run_menubar_impl(
             pass
 
         def quit_(self, sender: Any) -> None:
+            self.project_sync_stop.set()
             AppKit.NSApplication.sharedApplication().terminate_(self)
 
     controller = MultiAccountController.alloc().init()
@@ -917,6 +932,14 @@ def _run_menubar_impl(
         account_store=account_store,
     )
     controller.monitor_root = monitor_root
+    controller.project_sync_stop = Event()
+    controller.project_sync = (
+        LocalProjectSync(
+            state_path=controller.auth_file.with_name(".codex-global-state.json"),
+            store_dir=monitor_root,
+        )
+        if sync_local_projects else None
+    )
     controller.dashboard_server = None
     controller.dashboard_url = None
     controller.interval = max(60, int(interval))
@@ -936,16 +959,20 @@ def _run_menubar_impl(
     return 0
 
 
-def create_menubar_shortcut(*, project_root: Path, interval: int, name: str = "打开Codex顶栏") -> Path:
+def create_menubar_shortcut(
+    *, project_root: Path, interval: int, name: str = "打开Codex顶栏",
+    sync_local_projects: bool = False,
+) -> Path:
     shortcut = Path("~/Desktop").expanduser() / f"{name}.command"
     shortcut.parent.mkdir(parents=True, exist_ok=True)
     python_bin = project_root / ".venv" / "bin" / "python"
     python_command = quote(python_bin.as_posix()) if python_bin.exists() else "python"
     main_path = quote((project_root / "main.py").as_posix())
+    sync_flag = " --sync-local-projects" if sync_local_projects else ""
     script = f"""#!/bin/zsh
 cd {quote(project_root.as_posix())}
 launchctl remove com.xiaomeng.codexmenubar 2>/dev/null
-launchctl submit -l com.xiaomeng.codexmenubar -- {python_command} {main_path} menubar --interval {int(interval)}
+launchctl submit -l com.xiaomeng.codexmenubar -- {python_command} {main_path} menubar --interval {int(interval)}{sync_flag}
 """
     shortcut.write_text(script, encoding="utf-8")
     shortcut.chmod(0o755)
