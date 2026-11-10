@@ -10,6 +10,7 @@ from src.codex_widget import (
     _format_account_summary,
     _format_credit_menu_title,
     _format_limit_item,
+    _format_menubar_title,
     _format_plan_name,
     _format_reset_item,
     _is_valid_display_name,
@@ -21,6 +22,29 @@ from src.codex_widget import (
 
 
 class CodexWidgetFormattingTests(unittest.TestCase):
+    def test_menubar_balance_can_be_hidden_without_hiding_quota_or_cache(self) -> None:
+        usage = {
+            "rate_limit": {"primary_window": {"used_percent": 45}},
+            "credits": {"balance": "41585.54"},
+        }
+        self.assertEqual(
+            _format_menubar_title(usage), "55% · 41,585.54 点（$1,663.42）"
+        )
+        self.assertEqual(_format_menubar_title(usage, False), "55%")
+        self.assertEqual(_format_menubar_title(usage, False, True), "55%*")
+        self.assertEqual(
+            _format_menubar_title(usage, True, True),
+            "55% · 41,585.54 点（$1,663.42）*",
+        )
+
+    def test_menubar_handles_missing_quota_and_nonpositive_balance(self) -> None:
+        self.assertEqual(_format_menubar_title({}), "—")
+        for balance in (None, "0", "-10", "invalid"):
+            with self.subTest(balance=balance):
+                self.assertEqual(
+                    _format_menubar_title({"credits": {"balance": balance}}), "—"
+                )
+
     def test_missing_usage_never_reports_full_remaining_quota(self) -> None:
         self.assertEqual(_account_title_suffix(None), " · 等待刷新")
         self.assertEqual(

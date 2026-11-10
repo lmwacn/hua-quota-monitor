@@ -47,7 +47,7 @@ def _run_menubar_impl(
     try:
         import AppKit
         import objc
-        from Foundation import NSURL, NSObject, NSTimer
+        from Foundation import NSURL, NSObject, NSTimer, NSUserDefaults
     except ImportError:
         print("菜单栏模式需要 PyObjC，请使用项目 .venv 启动。")
         return 2
@@ -92,6 +92,10 @@ def _run_menubar_impl(
             self.menu.addItem_(AppKit.NSMenuItem.separatorItem())
             self._action(self.menu, "刷新所有账号", "refreshAll:")
             self._action(self.menu, "打开额度趋势面板", "openDashboard:")
+            self.balance_toggle = self._action(
+                self.menu, "菜单栏显示点数", "toggleMenubarBalance:"
+            )
+            self.balance_toggle.setState_(int(self.show_menubar_balance))
             self._action(self.menu, "退出", "quit:")
             self.status_item.setMenu_(self.menu)
             if self.project_sync is not None:
@@ -130,6 +134,21 @@ def _run_menubar_impl(
 
         def refreshAll_(self, sender: Any) -> None:
             self._start_refresh(True)
+
+        def toggleMenubarBalance_(self, sender: Any) -> None:
+            self.show_menubar_balance = not self.show_menubar_balance
+            self.preferences.setBool_forKey_(
+                self.show_menubar_balance, "huaQuotaShowMenubarBalance"
+            )
+            self.balance_toggle.setState_(int(self.show_menubar_balance))
+            current = self.results.get(self.selected_name)
+            if current is not None and current["usage"] is not None:
+                self.status_item.button().setTitle_(
+                    _format_menubar_title(
+                        current["usage"], self.show_menubar_balance,
+                        current.get("usage_cached", False),
+                    )
+                )
 
         def openDashboard_(self, sender: Any) -> None:
             if self.dashboard_server is None:
@@ -303,13 +322,11 @@ def _run_menubar_impl(
                 _format_credit_menu_title(count, credits, reset is not None)
             )
             self._build_credit_menu(self.credit_menu, credits, reset is not None)
-            used_percent = primary.get("used_percent")
-            title = "—" if used_percent is None else f"{max(0, 100 - _to_percent(used_percent))}%"
-            if positive:
-                title += f" · {_format_balance(balance)}（{_format_balance_usd(balance)}）"
-            if item.get("usage_cached"):
-                title += "*"
-            self.status_item.button().setTitle_(title)
+            self.status_item.button().setTitle_(
+                _format_menubar_title(
+                    usage, self.show_menubar_balance, item.get("usage_cached", False)
+                )
+            )
 
         @objc.python_method
         def _build_credit_menu(
@@ -916,6 +933,9 @@ def _run_menubar_impl(
             AppKit.NSApplication.sharedApplication().terminate_(self)
 
     controller = MultiAccountController.alloc().init()
+    controller.preferences = NSUserDefaults.standardUserDefaults()
+    controller.preferences.registerDefaults_({"huaQuotaShowMenubarBalance": True})
+    controller.show_menubar_balance = controller.preferences.boolForKey_("huaQuotaShowMenubarBalance")
     controller.auth_file = Path(auth_file)
     controller.base_url = base_url
     controller.account_store = account_store
@@ -1136,6 +1156,19 @@ def _to_percent(value: Any) -> int:
         return max(0, min(100, int(round(float(value)))))
     except (TypeError, ValueError):
         return 0
+
+
+def _format_menubar_title(
+    usage: dict[str, Any], show_balance: bool = True, cached: bool = False,
+) -> str:
+    windows = rate_limit_windows(usage.get("rate_limit") or {})
+    primary = windows[0][1] if windows else {}
+    used_percent = primary.get("used_percent")
+    title = "—" if used_percent is None else f"{max(0, 100 - _to_percent(used_percent))}%"
+    balance = (usage.get("credits") or {}).get("balance")
+    if show_balance and _has_positive_balance(balance):
+        title += f" · {_format_balance(balance)}（{_format_balance_usd(balance)}）"
+    return title + ("*" if cached else "")
 
 
 def _format_balance(value: Any) -> str:
