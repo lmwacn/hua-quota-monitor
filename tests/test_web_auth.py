@@ -19,6 +19,7 @@ from src.web_auth import (
     WebAuthTimeoutError,
     _resolve_codex_executable,
     login_with_chatgpt,
+    write_temporary_auth,
 )
 
 
@@ -29,6 +30,26 @@ class WebAuthTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_temporary_auth_is_private_unique_and_preserves_bytes(self) -> None:
+        credential = b'{"auth_mode":"chatgpt","tokens":{"secret":"test"}}\n'
+        with mock.patch("src.web_auth.tempfile.tempdir", str(self.base)):
+            first = write_temporary_auth(credential)
+            second = write_temporary_auth(credential)
+        self.assertNotEqual(first.parent, second.parent)
+        for path in (first, second):
+            self.assertEqual(path.name, "auth.json")
+            self.assertEqual(path.read_bytes(), credential)
+            if os.name != "nt":
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+
+    def test_temporary_auth_write_failure_removes_partial_directory(self) -> None:
+        with mock.patch("src.web_auth.tempfile.tempdir", str(self.base)):
+            with mock.patch("src.web_auth.open", side_effect=OSError("write failed")):
+                with self.assertRaises(OSError):
+                    write_temporary_auth(b"{}")
+        self.assertEqual(list(self.base.iterdir()), [])
 
     def _fake_codex(self, body: str) -> Path:
         path = self.base / f"fake-codex-{len(list(self.base.glob('fake-codex-*')))}"

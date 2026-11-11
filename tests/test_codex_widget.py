@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import unittest
+import sys
 from datetime import datetime
 from pathlib import Path
+from threading import Event
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from src.codex_widget import (
     _account_title_suffix,
@@ -18,7 +22,60 @@ from src.codex_widget import (
     _profile_display_name,
     _suggest_display_name,
     _suggest_account_name,
+    _run_menubar_impl,
 )
+
+
+class TemporaryJSONFlowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        controllers = []
+
+        class FakeNSObject:
+            @classmethod
+            def alloc(cls):
+                instance = cls()
+                instance.start = Mock()
+                controllers.append(instance)
+                return instance
+
+            def init(self):
+                return self
+
+        self.workspace = Mock()
+        modules = {
+            "AppKit": SimpleNamespace(NSWorkspace=Mock(sharedWorkspace=lambda: self.workspace)),
+            "objc": SimpleNamespace(python_method=lambda method: method),
+            "Foundation": SimpleNamespace(
+                NSObject=FakeNSObject, NSURL=Mock(), NSTimer=Mock(), NSUserDefaults=Mock(),
+            ),
+        }
+        with patch.dict(sys.modules, modules), patch("src.codex_widget.UsageMonitor"), patch(
+            "src.codex_widget.QuotaService"
+        ):
+            _run_menubar_impl(
+                auth_file=Path("unused/auth.json"), base_url="unused", interval=60,
+                account_store=Mock(root=Path("unused")), sync_local_projects=False,
+            )
+        self.controller = controllers[0]
+        self.controller._alert = Mock()
+        self.controller.refreshAll_ = Mock()
+
+    def test_temporary_result_reveals_file_without_adding_account(self) -> None:
+        path = Path("/tmp/test-auth/auth.json")
+        with patch("src.codex_widget.write_temporary_auth", return_value=path) as write:
+            self.controller.finishWebAuthorization_(("临时授权", b"{}", None, None, True))
+        write.assert_called_once_with(b"{}")
+        self.workspace.selectFile_inFileViewerRootedAtPath_.assert_called_once_with(str(path), "")
+        self.assertEqual(self.controller.account_store.mock_calls, [])
+        self.controller.refreshAll_.assert_not_called()
+
+    def test_cancelled_authorization_does_not_write_file(self) -> None:
+        self.controller.web_auth_cancel = Event()
+        self.controller.web_auth_cancel.set()
+        with patch("src.codex_widget.write_temporary_auth") as write:
+            self.controller.finishWebAuthorization_(("临时授权", b"{}", None, None, True))
+        write.assert_not_called()
+        self.workspace.selectFile_inFileViewerRootedAtPath_.assert_not_called()
 
 
 class CodexWidgetFormattingTests(unittest.TestCase):

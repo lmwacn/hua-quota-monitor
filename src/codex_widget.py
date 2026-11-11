@@ -16,7 +16,7 @@ from src.local_project_sync import LocalProjectSync
 from src.quota_service import QuotaService
 from src.rate_windows import rate_limit_windows
 from src.usage_monitor import UsageMonitor
-from src.web_auth import WebAuthCancelledError, login_with_chatgpt
+from src.web_auth import WebAuthCancelledError, login_with_chatgpt, write_temporary_auth
 
 
 def run_menubar(
@@ -384,6 +384,11 @@ def _run_menubar_impl(
                 )
                 self._action(
                     self.accounts_menu,
+                    "网页登录生成临时 JSON…",
+                    "webAuthorizeTemporaryJSON:",
+                )
+                self._action(
+                    self.accounts_menu,
                     "从 auth.json 导入…",
                     "importAuthFile:",
                 )
@@ -616,20 +621,32 @@ def _run_menubar_impl(
                 return
             self._start_web_authorization(display_name)
 
+        def webAuthorizeTemporaryJSON_(self, sender: Any) -> None:
+            if self.web_auth_in_progress:
+                self._show_web_authorization()
+                return
+            self._start_web_authorization("临时授权", temporary_only=True)
+
         @objc.python_method
-        def _start_web_authorization(self, display_name: str, target_name: str | None = None) -> None:
+        def _start_web_authorization(
+            self, display_name: str, target_name: str | None = None,
+            *, temporary_only: bool = False,
+        ) -> None:
             self.web_auth_in_progress = True
             self.web_auth_url = None
             self.web_auth_cancel = Event()
             Thread(
                 target=self._run_web_authorization,
-                args=(display_name, target_name),
+                args=(display_name, target_name, temporary_only),
                 name="codex-web-authorization",
                 daemon=True,
             ).start()
 
         @objc.python_method
-        def _run_web_authorization(self, display_name: str, target_name: str | None = None) -> None:
+        def _run_web_authorization(
+            self, display_name: str, target_name: str | None = None,
+            temporary_only: bool = False,
+        ) -> None:
             credential = None
             error = None
             try:
@@ -645,7 +662,8 @@ def _run_menubar_impl(
             except Exception as exc:
                 error = str(exc)
             self.performSelectorOnMainThread_withObject_waitUntilDone_(
-                "finishWebAuthorization:", (display_name, credential, error, target_name), False
+                "finishWebAuthorization:",
+                (display_name, credential, error, target_name, temporary_only), False
             )
 
         def webAuthorizationReady_(self, url: str) -> None:
@@ -722,7 +740,7 @@ def _run_menubar_impl(
                     temporary_path.unlink(missing_ok=True)
 
         def finishWebAuthorization_(self, payload: Any) -> None:
-            display_name, credential, error, target_name = payload
+            display_name, credential, error, target_name, temporary_only = payload
             if self.web_auth_alert is not None:
                 AppKit.NSApplication.sharedApplication().abortModal()
                 self.web_auth_alert = None
@@ -735,6 +753,21 @@ def _run_menubar_impl(
                 return
             if error:
                 self._alert("网页授权失败", error)
+                return
+            if temporary_only:
+                try:
+                    auth_path = write_temporary_auth(credential)
+                except Exception as exc:
+                    self._alert("生成临时 JSON 失败", str(exc))
+                    return
+                try:
+                    opened = AppKit.NSWorkspace.sharedWorkspace().selectFile_inFileViewerRootedAtPath_(
+                        str(auth_path), ""
+                    )
+                except Exception:
+                    opened = False
+                if not opened:
+                    self._alert("临时 JSON 已生成", f"请手动打开文件所在目录：\n{auth_path}")
                 return
             try:
                 if target_name is not None:

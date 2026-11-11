@@ -44,6 +44,19 @@ class InvalidWebAuthResultError(WebAuthError):
     pass
 
 
+def write_temporary_auth(credential: bytes) -> Path:
+    """保留临时授权文件供用户复制，由系统临时目录管理其生命周期。"""
+    directory = Path(tempfile.mkdtemp(prefix="hua-quota-auth-"))
+    auth_path = directory / "auth.json"
+    try:
+        with open(auth_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
+            handle.write(credential)
+        return auth_path
+    except Exception:
+        shutil.rmtree(directory)
+        raise
+
+
 def login_with_chatgpt(
     *,
     timeout: float = DEFAULT_LOGIN_TIMEOUT,

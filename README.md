@@ -58,6 +58,8 @@ uv pip install --python .venv/bin/python pyobjc-framework-Cocoa
 
 在“账号监控”中展开某个账号，点击“打开账号 JSON 所在位置”，即可在 Finder 中打开该账号的存储目录并选中 `auth.json`。
 
+只需生成授权文件时，点击“账号监控”中的“网页登录生成临时 JSON…”。完成网页登录授权后，程序会在系统临时目录中新建 `auth.json`，并在 Finder 中选中它，方便复制发送。此操作不添加监控账号，也不替换当前客户端凭据；文件保留供复制，可在使用后删除。
+
 如果只需要 Web 面板，不需要安装 PyObjC：
 
 ```bash
