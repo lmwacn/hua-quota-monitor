@@ -8,6 +8,8 @@ from pathlib import Path
 from threading import Event
 from typing import Any
 
+from src.local_sidebar_sync import account_ids, sync_sections
+
 
 _PROFILE = "electron-account-renderer-state-v1"
 _ATOMS = "electron-persisted-atom-state"
@@ -103,7 +105,7 @@ def _sync_layout(accounts: dict, layouts: dict, previous: dict, owner: str, ids:
     return {key: _layout(*account, ids) for key, account in accounts.items()}
 
 
-def merge_local_projects(state: dict, previous: dict) -> dict:
+def merge_local_projects(state: dict, previous: dict, identities: dict | None = None) -> dict:
     profiles = state.get(_PROFILE, {})
     owner = profiles.get("owner")
     if not owner or not profiles.get("inactive"):
@@ -134,9 +136,9 @@ def merge_local_projects(state: dict, previous: dict) -> dict:
             for key, value in values.items():
                 target.setdefault(key, set()).add(value)
     ids = set(shared)
-    if not ids:
-        return previous
     for globals_, _ in accounts.values():
+        if not ids:
+            continue
         projects = globals_.setdefault(_PROJECTS, {})
         for key, project in shared.items():
             existing = projects.get(key, {})
@@ -152,8 +154,16 @@ def merge_local_projects(state: dict, previous: dict) -> dict:
             target = globals_.setdefault(_MAPPINGS, {}).setdefault(host, {})
             target.update({key: next(iter(options)) for key, options in local.items()})
     layouts = {key: _layout(*account, ids) for key, account in accounts.items()}
-    baseline = _sync_layout(accounts, layouts, previous, owner, ids)
+    baseline = _sync_layout(accounts, layouts, previous, owner, ids) if ids else layouts
+    sections = sync_sections(accounts, previous, owner, ids, identities or {})
+    for key, view in sections.items():
+        baseline[key]["sections"] = view
+    for key in baseline:
+        if key not in sections and "sections" in previous.get(key, {}):
+            baseline[key]["sections"] = previous[key]["sections"]
     for key, (globals_, _) in accounts.items():
+        if not ids:
+            continue
         order = globals_.setdefault("project-order", [])
         order.extend(project for project in shared if project not in order)
         baseline[key]["order"]["ids"] = [project for project in order if project in ids]
@@ -182,7 +192,11 @@ class LocalProjectSync:
         original = self.state_path.read_bytes()
         state = json.loads(original)
         previous = json.loads(baseline_path.read_bytes()) if baseline_path.is_file() else {}
-        new_baseline = merge_local_projects(state, previous)
+        identities = account_ids([
+            self.state_path.with_name("auth.json"),
+            *self.directory.parent.glob("accounts/*/auth.json"),
+        ])
+        new_baseline = merge_local_projects(state, previous, identities)
         changed = state != json.loads(original)
         if changed:
             _atomic_write(self.directory / "last-backup.json", original)

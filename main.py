@@ -395,7 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
     menubar.add_argument("--shortcut-name", default="打开Codex顶栏", help="快捷按钮文件名（不带后缀）")
     menubar.add_argument(
         "--sync-local-projects", action="store_true",
-        help="在桌面客户端退出后双向同步已登录账号的本地项目、排序和置顶",
+        help="在桌面客户端退出后双向同步已登录账号的本地项目、排序、置顶和自定义分组",
     )
     menubar.set_defaults(func=cmd_menubar)
 
