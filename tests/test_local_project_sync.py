@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.local_project_sync import LocalProjectSync, merge_local_projects
+from src.local_project_sync import LocalProjectSync, _pinned_threads, merge_local_projects
 
 
 PROFILE = "electron-account-renderer-state-v1"
@@ -15,6 +16,11 @@ ATOMS = "electron-persisted-atom-state"
 PINS = "unified-sidebar-pinned-order-v1"
 ORDER = "unified-sidebar-project-order-v1"
 SORT = "flat-project-sidebar-preferences-v1"
+OWNER = "electron-renderer-content-owner"
+OWNER_ATOMS = "electron-owner-atoms:"
+SHOW_PINNED = "sidebar-priority-show-pinned-v1"
+COLLAPSED = "sidebar-collapsed-sections-v1"
+THREAD_ORDER = "app-server-pinned-thread-order-v1"
 
 
 def project(name):
@@ -49,6 +55,65 @@ def state_with_accounts():
 
 
 class LocalProjectSyncTests(unittest.TestCase):
+    def test_new_client_syncs_local_pinned_view_and_preserves_private_state(self):
+        first = "codex:thread:local:first"
+        second = "codex:thread:local:second"
+        cloud = "chatgpt:conversation:private"
+        project_key = "codex:project:one"
+        a = {
+            SHOW_PINNED: True,
+            COLLAPSED: {"pinned": True, "chats": True},
+            PINS: [second, cloud, project_key, first, "codex:thread:local:stale"],
+            THREAD_ORDER: ["second", "remote", "first"],
+        }
+        b = {
+            PINS: ["codex:thread:remote:private"],
+            COLLAPSED: {"chats": False},
+            "chatgpt-search-results-v2": {"private": True},
+        }
+        unread = {"unreadByIdentity": {"a": {"local": ["first"]}}}
+        state = {
+            OWNER: "b", OWNER_ATOMS + "a": a, OWNER_ATOMS + "b": b,
+            OWNER_ATOMS + "unidentified": {PINS: [cloud]},
+            "local-projects": {"one": project("one")},
+            "electron-thread-read-state-v1": copy.deepcopy(unread),
+        }
+        identities = {"a": "account-a", "b": "account-b", "new": "account-new"}
+        pinned_threads = {"first", "second"}
+        baseline = merge_local_projects(state, {}, identities, pinned_threads)
+        self.assertTrue(b[SHOW_PINNED])
+        self.assertEqual(b[PINS], ["codex:thread:remote:private", project_key, second, first])
+        self.assertEqual(b[COLLAPSED], {"pinned": True, "chats": False})
+        self.assertEqual(b[THREAD_ORDER], ["second", "first"])
+        self.assertEqual(a[THREAD_ORDER], ["second", "remote", "first"])
+        self.assertEqual(b["chatgpt-search-results-v2"], {"private": True})
+        self.assertEqual(state["electron-thread-read-state-v1"], unread)
+        self.assertNotIn(OWNER_ATOMS + "new", state)
+        self.assertEqual(state[OWNER_ATOMS + "unidentified"], {PINS: [cloud]})
+
+        b[SHOW_PINNED] = False
+        a[THREAD_ORDER] = ["first", "remote", "second"]
+        baseline = merge_local_projects(state, baseline, identities, pinned_threads)
+        self.assertFalse(a[SHOW_PINNED])
+        self.assertEqual(b[THREAD_ORDER], ["first", "second"])
+        before = copy.deepcopy(state)
+        self.assertEqual(merge_local_projects(state, baseline, identities, pinned_threads), baseline)
+        self.assertEqual(state, before)
+
+    def test_reads_only_unarchived_pinned_threads_from_shared_database(self):
+        with tempfile.TemporaryDirectory() as folder:
+            state = Path(folder) / ".codex-global-state.json"
+            with sqlite3.connect(state.with_name("state_5.sqlite")) as connection:
+                connection.execute("CREATE TABLE threads (id TEXT, thread_section_id TEXT, archived INTEGER)")
+                pinned_section = "01984de2-8f74-7c91-a3b2-5c5e937cf318"
+                connection.executemany("INSERT INTO threads VALUES (?, ?, ?)", [
+                    ("pinned", pinned_section, 0),
+                    ("archived", pinned_section, 1),
+                    ("custom", "another", 0),
+                ])
+            connection.close()
+            self.assertEqual(_pinned_threads(state), {"pinned"})
+
     def test_seeds_local_layout_without_copying_other_account_data(self):
         state = state_with_accounts()
         baseline = merge_local_projects(state, {})

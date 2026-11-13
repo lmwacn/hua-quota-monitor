@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from threading import Event
-from typing import Any
 
 from src.local_sidebar_sync import account_ids, sync_sections
 
 
 _PROFILE = "electron-account-renderer-state-v1"
+_OWNER = "electron-renderer-content-owner"
+_OWNER_ATOMS = "electron-owner-atoms:"
 _ATOMS = "electron-persisted-atom-state"
 _PROJECTS = "local-projects"
 _MAPPINGS = "app-server-project-id-by-legacy-project-id-by-host"
@@ -22,6 +25,15 @@ _LAYOUT = {
 }
 _CLOUD_FIELDS = ("chatGptBacking", "retiredChatGptBacking", "chatGptBackingCreation", "chatGptBackingRecoveryPending")
 _PROJECT_FIELDS = ("id", "name", "rootPaths", "createdAt", "updatedAt")
+_PINNED_SECTION = "01984de2-8f74-7c91-a3b2-5c5e937cf318"
+_THREAD_PIN_ORDER = "app-server-pinned-thread-order-v1"
+_COLLAPSED = "sidebar-collapsed-sections-v1"
+_SHOW_PINNED = "sidebar-priority-show-pinned-v1"
+_ACTIVITY = {
+    "sidebar-priority-show-priority-v1": True,
+    _SHOW_PINNED: False,
+    "sidebar-priority-show-scheduled-v1": False,
+}
 
 
 def desktop_running() -> bool:
@@ -72,21 +84,20 @@ def _sync_layout(accounts: dict, layouts: dict, previous: dict, owner: str, ids:
     seed = max(
         layouts,
         key=lambda key: (
-            bool(layouts[key]["pins"]["ids"]),
+            bool(layouts[key]["pins"]["ids"] or layouts[key]["pins"]["sidebar"]),
             bool(layouts[key]["order"]["sidebar"]),
             key == owner,
         ),
     )
     selected = {}
     for kind, (global_key, atom_key) in _LAYOUT.items():
-        edits = [
-            key for key in layouts if key in previous and layouts[key][kind] != previous[key][kind]
-        ]
+        known = {key: entry[kind] for key, entry in previous.items() if kind in entry}
+        edits = [key for key in layouts if key in known and layouts[key][kind] != known[key]]
         # 同一次退出遇到冲突时，以退出前仍在使用且改过该项的账号为准。
         source = owner if owner in edits else next(iter(sorted(edits)), seed)
         selected[kind] = layouts[source][kind]
-        if not edits and previous:
-            selected[kind] = next(iter(previous.values()))[kind]
+        if not edits and known:
+            selected[kind] = known[owner] if owner in known else next(iter(known.values()))
         for globals_, atoms in accounts.values():
             for data, key, values, valid in (
                 (globals_, global_key, selected[kind]["ids"], ids),
@@ -105,18 +116,95 @@ def _sync_layout(accounts: dict, layouts: dict, previous: dict, owner: str, ids:
     return {key: _layout(*account, ids) for key, account in accounts.items()}
 
 
-def merge_local_projects(state: dict, previous: dict, identities: dict | None = None) -> dict:
+def _sync_activity(accounts: dict, previous: dict, owner: str, pinned_threads: set[str]) -> dict:
+    pin_key = _LAYOUT["pins"][1]
+    local_keys = {f"codex:thread:local:{thread}" for thread in pinned_threads}
+
+    def view(atoms: dict) -> dict:
+        return {
+            **{key: atoms.get(key, default) for key, default in _ACTIVITY.items()},
+            "collapsed": atoms.get(_COLLAPSED, {}).get("pinned", False),
+            "sidebar": [item for item in atoms.get(pin_key, []) if item in local_keys],
+            "order": [item for item in atoms.get(_THREAD_PIN_ORDER, []) if item in pinned_threads],
+        }
+
+    views = {key: view(atoms) for key, (_, atoms) in accounts.items()}
+    seed = max(views, key=lambda key: (
+        bool(views[key][_SHOW_PINNED] or views[key]["sidebar"] or views[key]["order"]),
+        key == owner,
+    ))
+    selected = {}
+    for field in views[owner]:
+        known = {key: entry["activity"][field] for key, entry in previous.items()
+                 if field in entry.get("activity", {})}
+        edits = sorted(key for key in views if key in known and views[key][field] != known[key])
+        if edits:
+            selected[field] = views[owner if owner in edits else edits[0]][field]
+        elif known:
+            selected[field] = known[owner] if owner in known else known[min(known)]
+        else:
+            selected[field] = views[seed][field]
+
+    for _, atoms in accounts.values():
+        for key, default in _ACTIVITY.items():
+            if key in atoms or selected[key] != default:
+                atoms[key] = selected[key]
+        if _COLLAPSED in atoms or selected["collapsed"]:
+            atoms.setdefault(_COLLAPSED, {})["pinned"] = selected["collapsed"]
+        for key, field, local in (
+            (pin_key, "sidebar", local_keys),
+            (_THREAD_PIN_ORDER, "order", pinned_threads),
+        ):
+            local_order = [item for item in selected[field] if item in local]
+            values = _replace_local(atoms.get(key, []), local_order, local)
+            if values or key in atoms:
+                atoms[key] = values
+    return {key: view(atoms) for key, (_, atoms) in accounts.items()}
+
+
+def _pinned_threads(state_path: Path) -> set[str]:
+    # SQLite 中的本机置顶由客户端共享。这里只读取成员，过滤远程聊天和过期排序记录。
+    database = state_path.with_name("state_5.sqlite")
+    if not database.is_file():
+        return set()
+    try:
+        with closing(sqlite3.connect(f"{database.resolve().as_uri()}?mode=ro", uri=True, timeout=1)) as connection:
+            return {row[0] for row in connection.execute(
+                "SELECT id FROM threads WHERE thread_section_id = ? AND archived = 0",
+                (_PINNED_SECTION,),
+            )}
+    except sqlite3.OperationalError as error:
+        if str(error) in ("no such table: threads", "no such column: thread_section_id"):
+            return set()
+        raise
+
+
+def merge_local_projects(
+    state: dict, previous: dict, identities: dict | None = None, pinned_threads: set[str] | None = None,
+) -> dict:
     profiles = state.get(_PROFILE, {})
-    owner = profiles.get("owner")
-    if not owner or not profiles.get("inactive"):
+    identities = identities or {}
+    owner = state.get(_OWNER)
+    modern = bool(owner)
+    if modern:
+        # 新版把项目数据放在全局，只按账号保存渲染偏好。
+        accounts = {
+            key: (state, atoms) for key in identities
+            if isinstance(atoms := state.get(f"{_OWNER_ATOMS}{key}"), dict)
+        }
+    else:
+        owner = profiles.get("owner")
+        accounts = {
+            key: (entry["globals"], entry["atoms"]) for key, entry in profiles.get("inactive", {}).items()
+        }
+        if owner and accounts:
+            accounts[owner] = (state, state.setdefault(_ATOMS, {}))
+    if owner not in accounts or len(accounts) < 2:
         return previous
-    accounts = {
-        owner: (state, state.setdefault(_ATOMS, {})),
-        **{key: (entry["globals"], entry["atoms"]) for key, entry in profiles["inactive"].items()},
-    }
     shared: dict[str, dict] = {}
     mappings: dict[str, dict] = {}
-    for globals_, _ in accounts.values():
+    globals_by_profile = [state] if modern else [globals_ for globals_, _ in accounts.values()]
+    for globals_ in globals_by_profile:
         for key, project in globals_.get(_PROJECTS, {}).items():
             if not _local(project):
                 continue
@@ -136,7 +224,7 @@ def merge_local_projects(state: dict, previous: dict, identities: dict | None = 
             for key, value in values.items():
                 target.setdefault(key, set()).add(value)
     ids = set(shared)
-    for globals_, _ in accounts.values():
+    for globals_ in globals_by_profile:
         if not ids:
             continue
         projects = globals_.setdefault(_PROJECTS, {})
@@ -155,7 +243,10 @@ def merge_local_projects(state: dict, previous: dict, identities: dict | None = 
             target.update({key: next(iter(options)) for key, options in local.items()})
     layouts = {key: _layout(*account, ids) for key, account in accounts.items()}
     baseline = _sync_layout(accounts, layouts, previous, owner, ids) if ids else layouts
-    sections = sync_sections(accounts, previous, owner, ids, identities or {})
+    sections = sync_sections(accounts, previous, owner, ids, identities)
+    if modern:
+        for key, view in _sync_activity(accounts, previous, owner, pinned_threads or set()).items():
+            baseline[key]["activity"] = view
     for key, view in sections.items():
         baseline[key]["sections"] = view
     for key in baseline:
@@ -167,7 +258,7 @@ def merge_local_projects(state: dict, previous: dict, identities: dict | None = 
         order = globals_.setdefault("project-order", [])
         order.extend(project for project in shared if project not in order)
         baseline[key]["order"]["ids"] = [project for project in order if project in ids]
-    return baseline
+    return {**previous, **baseline}
 
 
 class LocalProjectSync:
@@ -196,7 +287,8 @@ class LocalProjectSync:
             self.state_path.with_name("auth.json"),
             *self.directory.parent.glob("accounts/*/auth.json"),
         ])
-        new_baseline = merge_local_projects(state, previous, identities)
+        pinned_threads = _pinned_threads(self.state_path) if state.get(_OWNER) else None
+        new_baseline = merge_local_projects(state, previous, identities, pinned_threads)
         changed = state != json.loads(original)
         if changed:
             _atomic_write(self.directory / "last-backup.json", original)
@@ -221,7 +313,9 @@ class LocalProjectSync:
                     if signature != last_signature and not stop.wait(2):
                         self.sync()
                         last_signature = signature
-            except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError) as error:
+            except (
+                OSError, ValueError, TypeError, KeyError, AttributeError, sqlite3.Error, subprocess.SubprocessError,
+            ) as error:
                 print(f"本地项目同步失败（{type(error).__name__}）", flush=True)
                 if stop.wait(30):
                     break
